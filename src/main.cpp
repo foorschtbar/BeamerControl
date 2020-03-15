@@ -9,9 +9,12 @@
 #include <PubSubClient.h>
 #include "config.h"
 #include <EEPROM.h>
-#include "settings.h" // Include my type definitions (must be in a separate file!)
+#include "settings.h"
+#include "html.h"
 
-// Constants
+/******************************************************************
+ * Constants                                                      *
+ ******************************************************************/
 const char FIRMWARE_VERSION[] = "1.1";
 const char COMPILE_DATE[] = __DATE__ " " __TIME__;
 const int CURRENT_CONFIG_VERSION = 4;
@@ -30,6 +33,19 @@ const int BEAMER_UPDATE_INTERVAL = 1000;
 
 const int HWSERIAL_BAUD = 115200;
 const int SWSERIAL_DEFAULT_BAUDRATE = 19200;
+
+constexpr unsigned SMALL_STR = 64 - 1;
+constexpr unsigned MED_STR = 256 - 1;
+constexpr unsigned LARGE_STR = 512 - 1;
+constexpr unsigned XLARGE_STR = 1024 - 1;
+
+#define RESERVE_STRING(name, size)    \
+  String name((const char *)nullptr); \
+  name.reserve(size)
+
+/******************************************************************
+ * Enums                                                          *
+ ******************************************************************/
 
 enum class Status
 {
@@ -98,6 +114,56 @@ void clearSerialBuffer()
   while (swSer.available())
   {
     swSer.read();
+  }
+}
+
+void showWEBAction()
+{
+  analogWrite(HWPIN_LED_WIFI, 0);
+  ledOneTime = millis();
+}
+
+/*****************************************************************
+ * html helper functions                                         *
+ *****************************************************************/
+
+static void start_html_page(String &page_content, const String &pagetitle, const int http_status_code = 200)
+{
+
+  showWEBAction();
+
+  char title[50];
+  char hostname[50];
+  WiFi.hostname().toCharArray(hostname, 50);
+  snprintf_P(title, sizeof(title), PSTR("BeamerControl@%s - %s"), hostname, pagetitle);
+
+  RESERVE_STRING(s, LARGE_STR);
+  s = FPSTR(WEB_PAGE_HEADER);
+  s.replace("{title}", title);
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(http_status_code, FPSTR(TXT_CONTENT_TYPE_TEXT_HTML), s);
+
+  server.sendContent_P(WEB_PAGE_HEADER_HEAD);
+
+  s = FPSTR(WEB_PAGE_BODY);
+  s.replace("{title}", title);
+
+  //s.replace("{id}", String(ESP.getChipId()));
+  //s.replace("{mac}", WiFi.macAddress());
+  page_content += s;
+}
+
+static void end_html_page(String &page_content)
+{
+  RESERVE_STRING(s, MED_STR);
+  s = FPSTR(WEB_PAGE_FOOTER);
+  s.replace("{firmware}", FPSTR(FIRMWARE_VERSION));
+  s.replace("{compiled}", FPSTR(COMPILE_DATE));
+  page_content += s;
+
+  if (page_content.length())
+  {
+    server.sendContent(page_content);
   }
 }
 
@@ -245,14 +311,14 @@ void HTMLFooter()
   html += "</html>\n";
 }
 
-long dBm2Quality(long dBm)
+long RSSI2Quality(int rssi)
 {
-  if (dBm <= -100)
+  if (rssi <= -100)
     return 0;
-  else if (dBm >= -50)
+  else if (rssi >= -50)
     return 100;
   else
-    return 2 * (dBm + 100);
+    return 2 * (rssi + 100);
 }
 
 void updateStatus()
@@ -439,12 +505,6 @@ void showMQTTAction()
 {
   analogWrite(HWPIN_LED_MQTT, 0);
   ledTwoTime = millis();
-}
-
-void showWEBAction()
-{
-  analogWrite(HWPIN_LED_WIFI, 0);
-  ledOneTime = millis();
 }
 
 void publishStatus()
@@ -655,22 +715,23 @@ void handleFWUpdate()
 
 void handleNotFound()
 {
-  showWEBAction();
-  HTMLHeader("File Not Found");
-  html += "URI: ";
-  html += server.uri();
-  html += "<br />\nMethod: ";
-  html += (server.method() == HTTP_GET) ? "GET" : "POST";
-  html += "<br />\nArguments: ";
-  html += server.args();
-  html += "<br />\n";
-  HTMLFooter();
+
+  RESERVE_STRING(page_content, LARGE_STR);
+  start_html_page(page_content, F("File Not Found"), 404);
+
+  // Enable Pagination
+  page_content += FPSTR(WEB_PAGE_NOTFOUND);
+  page_content.replace(F("{uri}"), server.uri());
+  page_content.replace(F("{methode}"), (server.method() == HTTP_GET ? F("GET") : F("POST")));
+
+  String args;
   for (uint8_t i = 0; i < server.args(); i++)
   {
-    html += " " + server.argName(i) + ": " + server.arg(i) + "<br />\n";
+    args += " " + server.argName(i) + ": " + server.arg(i) + "<br />\n";
   }
 
-  server.send(404, "text/html", html);
+  page_content.replace(F("{args}"), args);
+  end_html_page(page_content);
 }
 
 void handleWiFiScan()
@@ -723,7 +784,7 @@ void handleWiFiScan()
         html += "</td>\n<td>";
         html += WiFi.channel(i);
         html += "</td>\n<td>";
-        html += dBm2Quality(WiFi.RSSI(i));
+        html += RSSI2Quality(WiFi.RSSI(i));
         html += "%</td>\n<td>";
         html += WiFi.RSSI(i);
         html += "dBm</td>\n<td>";
@@ -876,7 +937,7 @@ void handleRoot()
   html += "</td>\n</tr>\n";
 
   html += "<tr>\n<td>Signal strength</td>\n<td>";
-  html += dBm2Quality(WiFi.RSSI());
+  html += RSSI2Quality(WiFi.RSSI());
   html += "% (";
   html += WiFi.RSSI();
   html += "dBm)</td>\n</tr>\n";
