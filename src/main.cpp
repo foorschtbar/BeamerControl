@@ -26,6 +26,7 @@ const int LED_WEB_MIN_TIME = 500;
 const int TIME_BUTTON_LONGPRESS = 10000;
 const int STATUS_PUBLISH_INTERVAL = 5000;
 const int MQTT_RECONNECT_INTERVAL = 2000;
+const int BEAMER_UPDATE_INTERVAL = 1000;
 
 const int HWSERIAL_BAUD = 115200;
 const int SWSERIAL_DEFAULT_BAUDRATE = 19200;
@@ -80,16 +81,17 @@ BeamerModel beamerModel = BeamerModel::UNKNOWN;
 int ledBrightness = 1024;
 
 // Misc
-const char *serverIndex = "<form method='POST' action='/update' enctype='multipart/form-data'><input type='file' name='update'><input type='submit' value='Update'></form>";
-unsigned long lastPublishTime = 0;
 bool ledOneToggle = false;
 bool ledTwoToggle = false;
+Status lastBeamerStatus = Status::UNKNOWN;
 
-unsigned long ledOneTime = 0;        // will store last time LED was updated
-unsigned long ledTwoTime = 0;        // will store last time LED was updated
-unsigned long mqttLastReconnect = 0; // will store last time reconnect to mqtt broker
-bool previousButtonState = 1;        // will store last Button state. 1 = unpressed, 0 = pressed
-unsigned long buttonTimer = 0;       // will store how long button was pressed
+unsigned long lastBeamerStatusTime = 0; // will store last beamer status time
+unsigned long lastPublishTime = 0;      // will store last publish time
+unsigned long ledOneTime = 0;           // will store last time LED was updated
+unsigned long ledTwoTime = 0;           // will store last time LED was updated
+unsigned long mqttLastReconnect = 0;    // will store last time reconnect to mqtt broker
+bool previousButtonState = 1;           // will store last Button state. 1 = unpressed, 0 = pressed
+unsigned long buttonTimer = 0;          // will store how long button was pressed
 
 void clearSerialBuffer()
 {
@@ -236,7 +238,7 @@ void HTMLFooter()
   html += "</div>";
   html += "<div id='footer'>&copy; 2020 Fabian Otto - Firmware v";
   html += FIRMWARE_VERSION;
-  html += " Compiled: ";
+  html += " - Compiled at ";
   html += COMPILE_DATE;
   html += "</div>\n";
   html += "</body>\n";
@@ -253,13 +255,14 @@ long dBm2Quality(long dBm)
     return 2 * (dBm + 100);
 }
 
-Status getStatus()
+void updateStatus()
 {
-
   size_t status_lenght;
   unsigned int i = 0;
 
-  Serial.print("getStatus: ");
+  Serial.print("updateStatus: ");
+
+  clearSerialBuffer();
 
   // Send Power Status qestion to Beamer
   if (beamerModel == BeamerModel::BENQ)
@@ -273,7 +276,7 @@ Status getStatus()
 
     swSer.print("\r*pow=?#\r");
 
-    delay(500);
+    delay(100);
     while (swSer.available())
     {
       char c = char(swSer.read());
@@ -294,27 +297,25 @@ Status getStatus()
     buffer[i] = 0;
 
     Serial.println(buffer);
-    /*Serial.print("Line1: ");
-      Serial.println(line1);*/
 
     if (strcmp(buffer, "*POW=OFF#") == 0)
     {
-      return Status::OFF;
+      lastBeamerStatus = Status::OFF;
     }
     else if (strcmp(buffer, "*POW=ON#") == 0)
     {
-      return Status::ON;
+      lastBeamerStatus = Status::ON;
     }
     else
     {
-      return Status::UNKNOWN;
+      lastBeamerStatus = Status::UNKNOWN;
     }
   }
   else if (beamerModel == BeamerModel::CANON)
   {
 
-    // 00H BFH 00H 00H 01H 02H C2H
-    // 22x
+    // Request    00H BFH 00H 00H 01H 02H C2H = 7
+    // Response   20H BFH 01H xxH 10H DATA01 to DATA16 CKS = 22
     status_lenght = 22;
     byte buffer[status_lenght];
     byte checksum = 0;
@@ -322,7 +323,7 @@ Status getStatus()
     byte GetData[] = {0x00, 0xbf, 0x00, 0x00, 0x01, 0x02, 0xc2};
     swSer.write(GetData, 7);
 
-    delay(500);
+    delay(100);
     while (swSer.available())
     {
 
@@ -344,46 +345,54 @@ Status getStatus()
 
     Serial.printf(" (Checksum: %02x, Last byte: %02x, Result: ", checksum, buffer[21]);
 
-    if (buffer[21] != checksum)
+    if (buffer[0] != 0x20)
+    {
+      // Response, but not success
+      Serial.println("No success response!)");
+    }
+    else if (buffer[21] != checksum)
     {
       // Chekcsum wrong
-      Serial.println("wrong!)");
-      return Status::UNKNOWN;
+      Serial.println("Checksum wrong!)");
+      lastBeamerStatus = Status::UNKNOWN;
     }
     else
     {
       // Checksum verified
-      Serial.println("verified!)");
+      Serial.println("Checksum verified!)");
 
       switch (buffer[6])
       {
       case 0x00: // Idle
-        return Status::OFF;
+        lastBeamerStatus = Status::OFF;
         break;
       case 0x03: // Undocumented: "Starting"
-        return Status::ON;
+        lastBeamerStatus = Status::ON;
         break;
       case 0x04: // Power On
-        return Status::ON;
+        lastBeamerStatus = Status::ON;
         break;
       case 0x05: // Cooling
-        return Status::ON;
+        lastBeamerStatus = Status::ON;
         break;
       case 0x06: // Idle(Error Standby)
-        return Status::OFF;
+        lastBeamerStatus = Status::OFF;
         break;
       default:
-        return Status::UNKNOWN;
+        lastBeamerStatus = Status::UNKNOWN;
         break;
       }
     }
-
-    return Status::UNKNOWN;
   }
   else
   {
-    return Status::UNKNOWN;
+    lastBeamerStatus = Status::UNKNOWN;
   }
+}
+
+Status getStatus()
+{
+  return lastBeamerStatus;
 }
 
 String getBeamerInfo()
@@ -624,7 +633,7 @@ void handleFWUpdate()
     html += "<form method='POST' action='/dofwupdate' enctype='multipart/form-data'>\n";
     html += "<table>\n";
     html += "<tr>\n";
-    html += "<td>Current Version</td>\n";
+    html += "<td>Current version</td>\n";
     html += String("<td>") + FIRMWARE_VERSION + String("</td>\n");
     html += "</tr>\n";
     html += "<tr>\n";
@@ -632,7 +641,7 @@ void handleFWUpdate()
     html += String("<td>") + COMPILE_DATE + String("</td>\n");
     html += "</tr>\n";
     html += "<tr>\n";
-    html += "<td>New Firmware File</td>\n";
+    html += "<td>Firmware file</td>\n";
     html += "<td><input type='file' name='update'></td>\n";
     html += "</tr>\n";
     html += "</table>\n";
@@ -1396,6 +1405,13 @@ void loop(void)
 
   // NTPClient Update
   timeClient.update();
+
+  // Update Beamer Status
+  if ((millis() - lastBeamerStatusTime) > BEAMER_UPDATE_INTERVAL)
+  {
+    lastBeamerStatusTime = millis();
+    updateStatus();
+  }
 
   // Config valid and WiFi connection
   if (!configIsDefault && WiFi.status() == WL_CONNECTED)
