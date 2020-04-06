@@ -6,13 +6,14 @@
 #include <ESP8266mDNS.h>
 #include <ESP8266HTTPUpdateServer.h>
 #include <SoftwareSerial.h>
-#include <PubSubClient.h>
+#include <PubSubClient.h> // API Doc: https://pubsubclient.knolleary.net/api.html
+#include <ArduinoJson.h>  // API Doc: https://arduinojson.org/v6/doc/
 #include "config.h"
 #include <EEPROM.h>
 #include "settings.h" // Include my type definitions (must be in a separate file!)
 
 // Constants
-const char FIRMWARE_VERSION[] = "1.1";
+const char FIRMWARE_VERSION[] = "1.2";
 const char COMPILE_DATE[] = __DATE__ " " __TIME__;
 const int CURRENT_CONFIG_VERSION = 4;
 
@@ -24,14 +25,14 @@ const int HWPIN_LED_MQTT = D7;
 const int LED_MQTT_MIN_TIME = 500;
 const int LED_WEB_MIN_TIME = 500;
 const int TIME_BUTTON_LONGPRESS = 10000;
-const int STATUS_PUBLISH_INTERVAL = 5000;
+const int state_PUBLISH_INTERVAL = 5000;
 const int MQTT_RECONNECT_INTERVAL = 2000;
-const int BEAMER_UPDATE_INTERVAL = 1000;
+const int DEVICE_POLL_INTERVAL = 1000;
 
 const int HWSERIAL_BAUD = 115200;
 const int SWSERIAL_DEFAULT_BAUDRATE = 19200;
 
-enum class Status
+enum class State
 {
   //STARTING,
   ON,
@@ -41,6 +42,7 @@ enum class Status
 };
 enum class BeamerModel
 {
+  DEMO,
   BENQ,
   CANON,
   UNKNOWN
@@ -83,15 +85,16 @@ int ledBrightness = 1024;
 // Misc
 bool ledOneToggle = false;
 bool ledTwoToggle = false;
-Status lastBeamerStatus = Status::UNKNOWN;
+State currentBeamerState = State::UNKNOWN;
+State demoBeamerState = State::UNKNOWN;
 
-unsigned long lastBeamerStatusTime = 0; // will store last beamer status time
-unsigned long lastPublishTime = 0;      // will store last publish time
-unsigned long ledOneTime = 0;           // will store last time LED was updated
-unsigned long ledTwoTime = 0;           // will store last time LED was updated
-unsigned long mqttLastReconnect = 0;    // will store last time reconnect to mqtt broker
-bool previousButtonState = 1;           // will store last Button state. 1 = unpressed, 0 = pressed
-unsigned long buttonTimer = 0;          // will store how long button was pressed
+unsigned long lastDevicePollTime = 0; // will store last beamer state time
+unsigned long lastPublishTime = 0;    // will store last publish time
+unsigned long ledOneTime = 0;         // will store last time LED was updated
+unsigned long ledTwoTime = 0;         // will store last time LED was updated
+unsigned long mqttLastReconnect = 0;  // will store last time reconnect to mqtt broker
+bool previousButtonState = 1;         // will store last Button state. 1 = unpressed, 0 = pressed
+unsigned long buttonTimer = 0;        // will store how long button was pressed
 
 void clearSerialBuffer()
 {
@@ -107,7 +110,7 @@ void HTMLHeader(const char *section, unsigned int refresh, const char *url)
   char title[50];
   char hostname[50];
   WiFi.hostname().toCharArray(hostname, 50);
-  snprintf(title, 50, "Starting BeamerControl@%s - %s", hostname, section);
+  snprintf(title, 50, "BeamerControl@%s - %s", hostname, section);
 
   html = "<!DOCTYPE html>";
   html += "<html>\n";
@@ -255,21 +258,123 @@ long dBm2Quality(long dBm)
     return 2 * (dBm + 100);
 }
 
-void updateStatus()
+State getState()
 {
-  size_t status_lenght;
-  unsigned int i = 0;
+  return currentBeamerState;
+}
 
-  Serial.print("updateStatus: ");
+void showMQTTAction()
+{
+  analogWrite(HWPIN_LED_MQTT, 0);
+  ledTwoTime = millis();
+}
+
+String getBeamerInfo()
+{
+  String str;
+  switch (beamerModel)
+  {
+  case BeamerModel::CANON:
+    str = "Canon";
+    break;
+  case BeamerModel::BENQ:
+    str = "Benq";
+    break;
+  case BeamerModel::DEMO:
+    str = "Demo";
+    break;
+  default:
+    str = "Unkown";
+    break;
+  }
+  return str + " (" + (configIsDefault ? SWSERIAL_DEFAULT_BAUDRATE : cfg.beamerbaudrate) + " Baud)";
+}
+
+String getStateString()
+{
+  switch (getState())
+  {
+    /*case State::STARTING:
+    return "Starting";
+    break;*/
+  case State::ON:
+    return "On";
+    break;
+    /*case State::SHUTDOWN:
+    return "Shutdown";
+    break;*/
+  case State::OFF:
+    return "Off";
+    break;
+  default:
+    return "Unkown";
+    break;
+  }
+}
+
+void publishState()
+{
+  showMQTTAction();
+  //Serial.println("-----------------------");
+  Serial.print("publishState: ");
+
+  char payload[64];
+  DynamicJsonDocument jsondoc(500);
+
+  switch (getState())
+  {
+  /*case State::STARTING:
+    Serial.println("Publish State STARTING");
+    client.publish(cfg.mqtt_topicPublish, "#starting");
+    break;*/
+  case State::ON:
+    Serial.println("ON");
+    jsondoc["state"] = "on";
+    //payload = '{"state"="on"}';
+    break;
+  /*case State::SHUTDOWN:
+    Serial.println("Publish State SHUTDOWN");
+    client.publish(cfg.mqtt_topicPublish, "#shutdown");
+    break;*/
+  case State::OFF:
+    Serial.println(" OFF");
+    jsondoc["state"] = "off";
+    break;
+  case State::UNKNOWN:
+    Serial.println(" UNKNOWN");
+    jsondoc["state"] = "unknown";
+    break;
+  }
+
+  jsondoc["id"] = FIRMWARE_VERSION;
+  size_t payloadSize = serializeJson(jsondoc, payload, sizeof(payload));
+
+  snprintf(buff, sizeof(buff), "%s/%s/announce", cfg.mqtt_prefix, WiFi.hostname().c_str());
+  client.publish(buff, payload, payloadSize);
+}
+
+void pollDeviceState()
+{
+  size_t state_lenght;
+  unsigned int i = 0;
+  State lastBeamerState = currentBeamerState;
+
+  Serial.print("pollDeviceState: ");
 
   clearSerialBuffer();
 
-  // Send Power Status qestion to Beamer
-  if (beamerModel == BeamerModel::BENQ)
+  // Send Power State qestion to Beamer
+  if (beamerModel == BeamerModel::DEMO)
+  {
+    currentBeamerState = demoBeamerState;
+    Serial.print(getStateString());
+    Serial.print(" (Demomode)\n");
+  }
+  else if (beamerModel == BeamerModel::BENQ)
   {
 
-    status_lenght = 50;
-    char buffer[status_lenght];
+    state_lenght = 50;
+    char buffer[state_lenght];
 
     boolean readOn;
     readOn = false;
@@ -287,7 +392,7 @@ void updateStatus()
       }
       else if (c != 13)
       { // Than all, but without CR
-        if (readOn && i < status_lenght)
+        if (readOn && i < state_lenght)
         {
           buffer[i] = c;
           i += 1;
@@ -300,15 +405,15 @@ void updateStatus()
 
     if (strcmp(buffer, "*POW=OFF#") == 0)
     {
-      lastBeamerStatus = Status::OFF;
+      currentBeamerState = State::OFF;
     }
     else if (strcmp(buffer, "*POW=ON#") == 0)
     {
-      lastBeamerStatus = Status::ON;
+      currentBeamerState = State::ON;
     }
     else
     {
-      lastBeamerStatus = Status::UNKNOWN;
+      currentBeamerState = State::UNKNOWN;
     }
   }
   else if (beamerModel == BeamerModel::CANON)
@@ -316,8 +421,8 @@ void updateStatus()
 
     // Request    00H BFH 00H 00H 01H 02H C2H = 7
     // Response   20H BFH 01H xxH 10H DATA01 to DATA16 CKS = 22
-    status_lenght = 22;
-    byte buffer[status_lenght];
+    state_lenght = 22;
+    byte buffer[state_lenght];
     byte checksum = 0;
 
     byte GetData[] = {0x00, 0xbf, 0x00, 0x00, 0x01, 0x02, 0xc2};
@@ -331,9 +436,9 @@ void updateStatus()
       //int i = int(swSer.read());
       Serial.printf("%02x ", b);
 
-      if (i < status_lenght)
+      if (i < state_lenght)
       {
-        if (i < status_lenght - 1)
+        if (i < state_lenght - 1)
         {
           checksum += b;
         }
@@ -354,7 +459,7 @@ void updateStatus()
     {
       // Chekcsum wrong
       Serial.println("Checksum wrong!)");
-      lastBeamerStatus = Status::UNKNOWN;
+      currentBeamerState = State::UNKNOWN;
     }
     else
     {
@@ -364,81 +469,35 @@ void updateStatus()
       switch (buffer[6])
       {
       case 0x00: // Idle
-        lastBeamerStatus = Status::OFF;
+        currentBeamerState = State::OFF;
         break;
       case 0x03: // Undocumented: "Starting"
-        lastBeamerStatus = Status::ON;
+        currentBeamerState = State::ON;
         break;
       case 0x04: // Power On
-        lastBeamerStatus = Status::ON;
+        currentBeamerState = State::ON;
         break;
       case 0x05: // Cooling
-        lastBeamerStatus = Status::ON;
+        currentBeamerState = State::ON;
         break;
       case 0x06: // Idle(Error Standby)
-        lastBeamerStatus = Status::OFF;
+        currentBeamerState = State::OFF;
         break;
       default:
-        lastBeamerStatus = Status::UNKNOWN;
+        currentBeamerState = State::UNKNOWN;
         break;
       }
     }
   }
   else
   {
-    lastBeamerStatus = Status::UNKNOWN;
+    currentBeamerState = State::UNKNOWN;
   }
-}
 
-Status getStatus()
-{
-  return lastBeamerStatus;
-}
-
-String getBeamerInfo()
-{
-  String str;
-  switch (beamerModel)
+  if (currentBeamerState != lastBeamerState)
   {
-  case BeamerModel::CANON:
-    str = "Canon";
-    break;
-  case BeamerModel::BENQ:
-    str = "Benq";
-    break;
-  default:
-    str = "Unkown";
-    break;
+    publishState();
   }
-  return str + " (" + (configIsDefault ? SWSERIAL_DEFAULT_BAUDRATE : cfg.beamerbaudrate) + " Baud)";
-}
-
-String getStatusString()
-{
-  switch (getStatus())
-  {
-    /*case Status::STARTING:
-    return "Starting";
-    break;*/
-  case Status::ON:
-    return "On";
-    break;
-    /*case Status::SHUTDOWN:
-    return "Shutdown";
-    break;*/
-  case Status::OFF:
-    return "Off";
-    break;
-  default:
-    return "Unkown";
-    break;
-  }
-}
-
-void showMQTTAction()
-{
-  analogWrite(HWPIN_LED_MQTT, 0);
-  ledTwoTime = millis();
 }
 
 void showWEBAction()
@@ -447,54 +506,32 @@ void showWEBAction()
   ledOneTime = millis();
 }
 
-void publishStatus()
-{
-  showMQTTAction();
-  Serial.println("-----------------------");
-  Serial.println("Send mqtt Status message: ");
-
-  switch (getStatus())
-  {
-  /*case Status::STARTING:
-    Serial.println("Publish Status STARTING");
-    client.publish(cfg.mqtt_topicPublish, "#starting");
-    break;*/
-  case Status::ON:
-    Serial.println("Publish Status ON");
-    client.publish(cfg.mqtt_topicPublish, "#on");
-    break;
-  /*case Status::SHUTDOWN:
-    Serial.println("Publish Status SHUTDOWN");
-    client.publish(cfg.mqtt_topicPublish, "#shutdown");
-    break;*/
-  case Status::OFF:
-    Serial.println("Publish Status OFF");
-    client.publish(cfg.mqtt_topicPublish, "#off");
-    break;
-  case Status::UNKNOWN:
-    Serial.println("Publish Status UNKNOWN");
-    client.publish(cfg.mqtt_topicPublish, "#unkown");
-    break;
-  }
-}
-
-void setStatus(Status status)
+void setState(State state)
 {
 
   // Switch Beamer ON
-  if (status == Status::ON)
+  if (state == State::ON)
   {
     Serial.println("Sending power ON sequence...");
-    if (beamerModel == BeamerModel::BENQ)
+    switch (beamerModel)
     {
+    case BeamerModel::DEMO:
+      demoBeamerState = State::ON;
+      digitalWrite(HWPIN_LED_BOARD, false); // Switch on onboard LED to display the demo state
+      break;
+    case BeamerModel::BENQ:
       swSer.print("\r*pow=on#\r");
-    }
-    else
+      break;
+    case BeamerModel::CANON:
     {
       byte GetData[] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x02};
       swSer.write(GetData, 6);
       delay(500);
       clearSerialBuffer();
+      break;
+    }
+    default:
+      break;
     }
 
     // Switch Beamer OFF
@@ -502,56 +539,43 @@ void setStatus(Status status)
   else
   {
     Serial.println("Sending power OFF sequence...");
-    if (beamerModel == BeamerModel::BENQ)
+    switch (beamerModel)
     {
+    case BeamerModel::DEMO:
+      demoBeamerState = State::OFF;
+      digitalWrite(HWPIN_LED_BOARD, true); // Switch off onboard LED to display the demo State
+      break;
+    case BeamerModel::BENQ:
       swSer.print("\r*pow=off#\r");
-    }
-    else
+      break;
+    case BeamerModel::CANON:
     {
       byte GetData[] = {0x02, 0x01, 0x00, 0x00, 0x00, 0x03};
       swSer.write(GetData, 6);
       delay(500);
       clearSerialBuffer();
+      break;
+    }
+    default:
+      break;
     }
   }
 }
 
-void toggleStatus()
+void toggleState()
 {
 
-  switch (getStatus())
+  switch (getState())
   {
-  case Status::ON:
-    setStatus(Status::OFF);
+  case State::ON:
+    setState(State::OFF);
     break;
-  case Status::OFF:
-    setStatus(Status::ON);
+  case State::OFF:
+    setState(State::ON);
     break;
   default:
-    //do nothing
+    setState(State::OFF);
     break;
-  }
-}
-
-void BeamerControl(char *message)
-{
-
-  if (strcmp(message, "#on") == 0)
-  {
-    setStatus(Status::ON);
-  }
-  else if (strcmp(message, "#off") == 0)
-  {
-    setStatus(Status::OFF);
-  }
-  else if (strcmp(message, "#status") == 0)
-  {
-    //getStatus();
-    publishStatus();
-  }
-  else
-  {
-    Serial.print("Unkown command");
   }
 }
 
@@ -598,11 +622,11 @@ void handleSwitch()
         {
           if (server.arg(i) == "On")
           {
-            setStatus(Status::ON);
+            setState(State::ON);
           }
           else if (server.arg(i) == "Off")
           {
-            setStatus(Status::OFF);
+            setState(State::OFF);
           }
         }
       }
@@ -825,7 +849,7 @@ void handleRoot()
   html += COMPILE_DATE;
   html += "</td>\n</tr>\n";
 
-  html += "<tr>\n<td>MQTT Status</td>\n<td>";
+  html += "<tr>\n<td>MQTT State</td>\n<td>";
   if (client.connected())
   {
     html += "Connected";
@@ -840,8 +864,8 @@ void handleRoot()
   html += getBeamerInfo();
   html += "</td>\n</tr>\n";
 
-  html += "<tr>\n<td>Power status</td>\n<td>";
-  html += getStatusString();
+  html += "<tr>\n<td>Power state</td>\n<td>";
+  html += getStateString();
   html += "</td>\n</tr>\n";
 
   html += "<tr>\n<td>Note</td>\n<td>";
@@ -859,16 +883,20 @@ void handleRoot()
   html += WiFi.hostname().c_str();
   html += "</td>\n</tr>\n";
 
-  html += "<tr>\n<td>IP</td>\n<td>";
+  html += "<tr>\n<td>IP address</td>\n<td>";
   html += WiFi.localIP().toString();
+  html += "</td>\n</tr>\n";
+
+  html += "<tr>\n<td>Subnetmask</td>\n<td>";
+  html += WiFi.subnetMask().toString();
   html += "</td>\n</tr>\n";
 
   html += "<tr>\n<td>Gateway</td>\n<td>";
   html += WiFi.gatewayIP().toString();
   html += "</td>\n</tr>\n";
 
-  html += "<tr>\n<td>Subnetmask</td>\n<td>";
-  html += WiFi.subnetMask().toString();
+  html += "<tr>\n<td>DNS-Server</td>\n<td>";
+  html += WiFi.dnsIP().toString();
   html += "</td>\n</tr>\n";
 
   html += "<tr>\n<td>MAC</td>\n<td>";
@@ -973,16 +1001,15 @@ void handleSettings()
         {
           value.toCharArray(cfg.mqtt_password, sizeof(cfg.mqtt_password) / sizeof(*cfg.mqtt_password));
 
-        } // MQTT Topic Subscribe
-        else if (server.argName(i) == "mqtt_topicSubscribe")
+        } // MQTT Prefix
+        else if (server.argName(i) == "mqtt_prefix")
         {
-          value.toCharArray(cfg.mqtt_topicSubscribe, sizeof(cfg.mqtt_topicSubscribe) / sizeof(*cfg.mqtt_topicSubscribe));
+          value.toCharArray(cfg.mqtt_prefix, sizeof(cfg.mqtt_prefix) / sizeof(*cfg.mqtt_prefix));
 
-        } // MQTT Topic Publish
-        else if (server.argName(i) == "mqtt_topicPublish")
+        } // MQTT periodic update interval
+        else if (server.argName(i) == "mqtt_periodic_update_interval")
         {
-          value.toCharArray(cfg.mqtt_topicPublish, sizeof(cfg.mqtt_topicPublish) / sizeof(*cfg.mqtt_topicPublish));
-
+          cfg.mqtt_periodic_update_interval = value.toInt();
         } // LED Brightness
         else if (server.argName(i) == "led_brightness")
         {
@@ -1079,6 +1106,9 @@ void handleSettings()
       html += "<option value='canon'";
       html += (strcmp("canon", cfg.beamermodel) == 0 ? " selected" : "");
       html += ">Canon</option>";
+      html += "<option value='demo'";
+      html += (strcmp("demo", cfg.beamermodel) == 0 ? " selected" : "");
+      html += ">Demo</option>";
       html += "</select>";
       html += "</td>\n</tr>\n";
 
@@ -1101,27 +1131,27 @@ void handleSettings()
       html += "<tr>\n<td>\nMQTT Port:</td>\n";
       html += "<td><input name='mqtt_port' type='text' maxlength='5' autocapitalize='none' value='";
       html += cfg.mqtt_port;
-      html += "'></td>\n</tr>\n";
+      html += "'> (Default 1883)</td>\n</tr>\n";
 
       html += "<tr>\n<td>\nMQTT User:</td>\n";
-      html += "<td><input name='mqtt_user' type='text' maxlength='30' autocapitalize='none' value='";
+      html += "<td><input name='mqtt_user' type='text' maxlength='50' autocapitalize='none' value='";
       html += cfg.mqtt_user;
       html += "'></td>\n</tr>\n";
 
       html += "<tr>\n<td>\nMQTT Password:</td>\n";
-      html += "<td><input name='mqtt_password' type='password' maxlength='30' autocapitalize='none' value='";
+      html += "<td><input name='mqtt_password' type='password' maxlength='50' autocapitalize='none' value='";
       html += cfg.mqtt_password;
       html += "'></td>\n</tr>\n";
 
-      html += "<tr>\n<td>\nMQTT Topic Subscribe:</td>\n";
-      html += "<td><input name='mqtt_topicSubscribe' type='text' maxlength='30' autocapitalize='none' value='";
-      html += cfg.mqtt_topicSubscribe;
+      html += "<tr>\n<td>\nMQTT Prefix:</td>\n";
+      html += "<td><input name='mqtt_prefix' type='text' maxlength='30' autocapitalize='none' value='";
+      html += cfg.mqtt_prefix;
       html += "'></td>\n</tr>\n";
 
-      html += "<tr>\n<td>\nMQTT Topic Publish:</td>\n";
-      html += "<td><input name='mqtt_topicPublish' type='text' maxlength='30' autocapitalize='none' value='";
-      html += cfg.mqtt_topicPublish;
-      html += "'></td>\n</tr>\n";
+      html += "<tr>\n<td>\nMQTT Periodic Update Interval:</td>\n";
+      html += "<td><input name='mqtt_periodic_update_interval' type='text' maxlength='5' autocapitalize='none' value='";
+      html += cfg.mqtt_periodic_update_interval;
+      html += "'> (in sec. 0 to disable)</td>\n</tr>\n";
 
       html += "</table>\n";
 
@@ -1140,36 +1170,82 @@ void handleSettings()
   }
 }
 
+void processCommand(JsonObject &json)
+{
+  Serial.println("processCommand");
+
+  // Poweron
+  if (json.containsKey("poweron"))
+  {
+    if (json["poweron"].as<boolean>())
+    {
+      setState(State::ON);
+    }
+    else
+    {
+      setState(State::OFF);
+    }
+  }
+
+  // Force announcement
+  if (json.containsKey("announce"))
+  {
+    publishState();
+  }
+}
+
 void MQTTcallback(char *topic, byte *payload, unsigned int length)
 {
   showMQTTAction();
-  Serial.println("-----------------------");
+  Serial.println("--- MQTTcallback ---");
   Serial.println("New Message");
   Serial.print("> Lenght: ");
   Serial.println(length);
   Serial.print("> Topic: ");
   Serial.println(topic);
 
-  Serial.print("> Message: ");
+  if (length)
+  {
+    StaticJsonDocument<256> jsondoc;
+    DeserializationError err = deserializeJson(jsondoc, payload);
+    if (err)
+    {
+      Serial.print("deserializeJson() failed: ");
+      Serial.println(err.c_str());
+    }
+    else
+    {
 
+      Serial.print("> JSON: ");
+      serializeJsonPretty(jsondoc, Serial);
+      Serial.println();
+
+      JsonObject object = jsondoc.as<JsonObject>();
+      processCommand(object);
+    }
+  }
+
+  /*
   char *message = new char[length + 1];
 
-  //message = (char *)payload;
-  /*
-  for (unsigned int i = 0; i < length; i++)
-  {
-    //message = message + (char)payload[i]; //Conver *byte to String
-    message[i] = (char)payload[i];
-  }
-  */
+  message = (char *)payload;
+
+  //for (unsigned int i = 0; i < length; i++)
+  //{
+  //  //message = message + (char)payload[i]; //Conver *byte to String
+  //  message[i] = (char)payload[i];
+  // }
+
   memcpy(message, payload, length);
   message[length] = 0;
   Serial.print(message);
   Serial.println();
 
   BeamerControl(message);
+  
 
   delete message;
+  */
 }
 
 boolean MQTTconnect()
@@ -1185,11 +1261,17 @@ boolean MQTTconnect()
     client.setServer(cfg.mqtt_server, cfg.mqtt_port);
     client.setCallback(MQTTcallback);
 
-    if (client.connect(cfg.hostname, cfg.mqtt_user, cfg.mqtt_password))
+    if (client.connect(WiFi.hostname().c_str(), cfg.mqtt_user, cfg.mqtt_password))
     {
       Serial.println("connected!");
-      client.subscribe(cfg.mqtt_topicSubscribe);
-      Serial.printf("Subscribed to topic %s\n", cfg.mqtt_topicSubscribe);
+
+      snprintf(buff, sizeof(buff), "%s/command", cfg.mqtt_prefix);
+      client.subscribe(buff);
+      Serial.printf("Subscribed to topic %s\n", buff);
+
+      snprintf(buff, sizeof(buff), "%s/%s/command", cfg.mqtt_prefix, WiFi.hostname().c_str());
+      client.subscribe(buff);
+      Serial.printf("Subscribed to topic %s\n", buff);
       return true;
     }
     else
@@ -1228,8 +1310,8 @@ void loadDefaults()
   memcpy(cfg.mqtt_user, "", sizeof(cfg.mqtt_user) / sizeof(*cfg.mqtt_user));
   cfg.mqtt_port = 1883;
   memcpy(cfg.mqtt_password, "", sizeof(cfg.mqtt_password) / sizeof(*cfg.mqtt_password));
-  memcpy(cfg.mqtt_topicSubscribe, "", sizeof(cfg.mqtt_topicSubscribe) / sizeof(*cfg.mqtt_topicSubscribe));
-  memcpy(cfg.mqtt_topicPublish, "", sizeof(cfg.mqtt_topicPublish) / sizeof(*cfg.mqtt_topicPublish));
+  memcpy(cfg.mqtt_prefix, "beamercontrol", sizeof(cfg.mqtt_prefix) / sizeof(*cfg.mqtt_prefix));
+  cfg.mqtt_periodic_update_interval = 10;
 }
 
 void loadConfig()
@@ -1257,7 +1339,7 @@ void handleButton()
     if (inp != previousButtonState)
     {
       Serial.printf("Button short press @ %lu\n", millis());
-      toggleStatus();
+      toggleState();
       buttonTimer = millis();
     }
     if ((millis() - buttonTimer >= TIME_BUTTON_LONGPRESS))
@@ -1343,7 +1425,11 @@ void setup(void)
     analogWrite(HWPIN_LED_WIFI, ledBrightness);
 
     // Beamermodel
-    if (strcmp(cfg.beamermodel, "benq") == 0)
+    if (strcmp(cfg.beamermodel, "demo") == 0)
+    {
+      beamerModel = BeamerModel::DEMO;
+    }
+    else if (strcmp(cfg.beamermodel, "benq") == 0)
     {
       beamerModel = BeamerModel::BENQ;
     }
@@ -1406,11 +1492,11 @@ void loop(void)
   // NTPClient Update
   timeClient.update();
 
-  // Update Beamer Status
-  if ((millis() - lastBeamerStatusTime) > BEAMER_UPDATE_INTERVAL)
+  // Update Beamer State
+  if ((millis() - lastDevicePollTime) > DEVICE_POLL_INTERVAL)
   {
-    lastBeamerStatusTime = millis();
-    updateStatus();
+    lastDevicePollTime = millis();
+    pollDeviceState();
   }
 
   // Config valid and WiFi connection
@@ -1429,10 +1515,14 @@ void loop(void)
       // Handle MQTT msgs
       client.loop();
 
-      if (millis() - lastPublishTime >= STATUS_PUBLISH_INTERVAL)
+      // send periodic update if enabled
+      if (cfg.mqtt_periodic_update_interval > 0)
       {
-        lastPublishTime = millis();
-        publishStatus();
+        if (millis() - lastPublishTime >= cfg.mqtt_periodic_update_interval * 1000)
+        {
+          lastPublishTime = millis();
+          publishState();
+        }
       }
     }
     else

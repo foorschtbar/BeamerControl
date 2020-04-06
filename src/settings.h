@@ -22,8 +22,8 @@ typedef struct
     uint16_t mqtt_port;
     char mqtt_user[50];
     char mqtt_password[50];
-    char mqtt_topicSubscribe[50];
-    char mqtt_topicPublish[50];
+    char mqtt_prefix[50];
+    uint16_t mqtt_periodic_update_interval;
 
     uint8_t led_brightness; // in percent
 
