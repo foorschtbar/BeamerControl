@@ -88,13 +88,13 @@ bool ledTwoToggle = false;
 State currentBeamerState = State::UNKNOWN;
 State demoBeamerState = State::UNKNOWN;
 
-unsigned long lastDevicePollTime = 0; // will store last beamer state time
-unsigned long lastPublishTime = 0;    // will store last publish time
-unsigned long ledOneTime = 0;         // will store last time LED was updated
-unsigned long ledTwoTime = 0;         // will store last time LED was updated
-unsigned long mqttLastReconnect = 0;  // will store last time reconnect to mqtt broker
-bool previousButtonState = 1;         // will store last Button state. 1 = unpressed, 0 = pressed
-unsigned long buttonTimer = 0;        // will store how long button was pressed
+unsigned long lastDevicePollTime = 0;       // will store last beamer state time
+unsigned long lastPublishTime = 0;          // will store last publish time
+unsigned long ledOneTime = 0;               // will store last time LED was updated
+unsigned long ledTwoTime = 0;               // will store last time LED was updated
+unsigned long mqttLastReconnectAttempt = 0; // will store last time reconnect to mqtt broker
+bool previousButtonState = 1;               // will store last Button state. 1 = unpressed, 0 = pressed
+unsigned long buttonTimer = 0;              // will store how long button was pressed
 
 void clearSerialBuffer()
 {
@@ -346,7 +346,7 @@ void publishState()
     break;
   }
 
-  jsondoc["id"] = FIRMWARE_VERSION;
+  //jsondoc["firmware"] = FIRMWARE_VERSION;
   size_t payloadSize = serializeJson(jsondoc, payload, sizeof(payload));
 
   snprintf(buff, sizeof(buff), "%s/%s/announce", cfg.mqtt_prefix, WiFi.hostname().c_str());
@@ -1248,9 +1248,9 @@ void MQTTcallback(char *topic, byte *payload, unsigned int length)
   */
 }
 
-boolean MQTTconnect()
+boolean MQTTreconnect()
 {
-  Serial.print("Connecting to MQTT...");
+  Serial.printf("Connecting to MQTT Broker \"%s\"...", cfg.mqtt_server);
   if (strcmp(cfg.mqtt_server, "") == 0)
   {
     Serial.println("failed. No server configured.");
@@ -1258,10 +1258,13 @@ boolean MQTTconnect()
   }
   else
   {
+
     client.setServer(cfg.mqtt_server, cfg.mqtt_port);
     client.setCallback(MQTTcallback);
 
-    if (client.connect(WiFi.hostname().c_str(), cfg.mqtt_user, cfg.mqtt_password))
+    snprintf(buff, sizeof(buff), "%s/%s/announce", cfg.mqtt_prefix, WiFi.hostname().c_str());
+
+    if (client.connect(WiFi.hostname().c_str(), cfg.mqtt_user, cfg.mqtt_password, buff, 0, 0, "{\"state\":\"disconnected\"}"))
     {
       Serial.println("connected!");
 
@@ -1503,9 +1506,20 @@ void loop(void)
   if (!configIsDefault && WiFi.status() == WL_CONNECTED)
   {
 
-    if (client.connected())
+    if (!client.connected())
     {
-
+      // MQTT connect
+      if (mqttLastReconnectAttempt == 0 || (millis() - mqttLastReconnectAttempt) >= MQTT_RECONNECT_INTERVAL)
+      {
+        mqttLastReconnectAttempt = millis();
+        if (MQTTreconnect())
+        {
+          mqttLastReconnectAttempt = 0;
+        }
+      }
+    }
+    else
+    {
       // Switch back on MQTT LED if we have server connection
       if ((millis() - ledTwoTime) > LED_MQTT_MIN_TIME)
       {
@@ -1523,15 +1537,6 @@ void loop(void)
           lastPublishTime = millis();
           publishState();
         }
-      }
-    }
-    else
-    {
-      // MQTT connect
-      if ((millis() - mqttLastReconnect) >= MQTT_RECONNECT_INTERVAL)
-      {
-        MQTTconnect();
-        mqttLastReconnect = millis();
       }
     }
   }
