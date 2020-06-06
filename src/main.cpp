@@ -28,9 +28,9 @@ const int state_PUBLISH_INTERVAL = 5000;
 const int MQTT_RECONNECT_INTERVAL = 2000;
 const int DEVICE_POLL_INTERVAL = 1000;
 
-const char MQTT_SUBSCRIBE_CMD_TOPIC1[] = "%s/cmd";               // Subscribe patter without hostname
-const char MQTT_SUBSCRIBE_CMD_TOPIC2[] = "%s/%s/cmd";            // Subscribe patter with hostname
-const char MQTT_PUBLISH_STATUS_TOPIC[] = "%s/%s/status";         // Public pattern for status (normal and LWT) with hostname
+const char MQTT_SUBSCRIBE_CMD_TOPIC1[] = "%scmd";                // Subscribe patter without hostname
+const char MQTT_SUBSCRIBE_CMD_TOPIC2[] = "%s%s/cmd";             // Subscribe patter with hostname
+const char MQTT_PUBLISH_STATUS_TOPIC[] = "%s%s/status";          // Public pattern for status (normal and LWT) with hostname
 const char MQTT_LWT_MESSAGE[] = "{\"bridge\":\"disconnected\"}"; // LWT message
 
 const int HWSERIAL_BAUD = 115200;
@@ -91,6 +91,7 @@ bool ledOneToggle = false;
 bool ledTwoToggle = false;
 State currentBeamerState = State::UNKNOWN;
 State demoBeamerState = State::UNKNOWN;
+char mqtt_prefix[50];
 
 unsigned long lastDevicePollTime = 0;       // will store last beamer state time
 unsigned long lastPublishTime = 0;          // will store last publish time
@@ -355,7 +356,7 @@ void MQTTpublishStatus()
 
   Serial.printf_P(PSTR("Message: %s\n"), payload);
 
-  snprintf(buff, sizeof(buff), MQTT_PUBLISH_STATUS_TOPIC, cfg.mqtt_prefix, WiFi.hostname().c_str());
+  snprintf(buff, sizeof(buff), MQTT_PUBLISH_STATUS_TOPIC, mqtt_prefix, WiFi.hostname().c_str());
   client.publish(buff, (uint8_t *)payload, (unsigned int)payloadSize, true);
 
   lastPublishTime = millis();
@@ -1282,17 +1283,17 @@ boolean MQTTreconnect()
     client.setCallback(MQTTcallback);
 
     //last will and testament topic
-    snprintf(buff, sizeof(buff), MQTT_PUBLISH_STATUS_TOPIC, cfg.mqtt_prefix, WiFi.hostname().c_str());
+    snprintf(buff, sizeof(buff), MQTT_PUBLISH_STATUS_TOPIC, mqtt_prefix, WiFi.hostname().c_str());
 
     if (client.connect(WiFi.hostname().c_str(), cfg.mqtt_user, cfg.mqtt_password, buff, 0, 1, MQTT_LWT_MESSAGE))
     {
       Serial.println(F("connected!"));
 
-      snprintf(buff, sizeof(buff), MQTT_SUBSCRIBE_CMD_TOPIC1, cfg.mqtt_prefix);
+      snprintf(buff, sizeof(buff), MQTT_SUBSCRIBE_CMD_TOPIC1, mqtt_prefix);
       client.subscribe(buff);
       Serial.printf_P(PSTR("Subscribed to topic %s\n"), buff);
 
-      snprintf(buff, sizeof(buff), MQTT_SUBSCRIBE_CMD_TOPIC2, cfg.mqtt_prefix, WiFi.hostname().c_str());
+      snprintf(buff, sizeof(buff), MQTT_SUBSCRIBE_CMD_TOPIC2, mqtt_prefix, WiFi.hostname().c_str());
       client.subscribe(buff);
       Serial.printf_P(PSTR("Subscribed to topic %s\n"), buff);
       return true;
@@ -1394,9 +1395,19 @@ void setup(void)
   // Load Config
   loadConfig();
 
+  if (strcmp_P(cfg.mqtt_prefix, PSTR("")) == 0)
+  {
+    strncpy(mqtt_prefix, cfg.mqtt_prefix, sizeof(mqtt_prefix));
+  }
+  else
+  {
+    strncpy(mqtt_prefix, cfg.mqtt_prefix, (sizeof(mqtt_prefix) - 1));
+    strcat(mqtt_prefix, "/");
+  }
+
   Serial.begin(HWSERIAL_BAUD);
   delay(1000);
-  Serial.printf_P(PSTR("\nWelcome to BeamerControl v%s\n"), FIRMWARE_VERSION);
+  Serial.printf_P(PSTR("\n+++ Welcome to BeamerControl v%s+++\n"), FIRMWARE_VERSION);
   WiFi.mode(WIFI_OFF);
 
   // AP or Infrastructire mode
