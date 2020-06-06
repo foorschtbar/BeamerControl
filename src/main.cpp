@@ -51,6 +51,13 @@ enum class BeamerModel
   CANON,
   UNKNOWN
 };
+enum class StatusTrigger
+{
+  PERIODIC,
+  POLL,
+  CMD,
+  BUTTON
+};
 
 void HTMLHeader(const char section[], unsigned int refresh = 0, const char url[] = "/");
 
@@ -274,7 +281,29 @@ void showMQTTAction()
   ledTwoTime = millis();
 }
 
-String getBeamerInfo()
+String getStatusTriggerString(StatusTrigger statusTrigger)
+{
+  switch (statusTrigger)
+  {
+  case StatusTrigger::PERIODIC:
+    return "periodic";
+    break;
+  case StatusTrigger::POLL:
+    return "poll";
+    break;
+  case StatusTrigger::CMD:
+    return "cmd";
+    break;
+  case StatusTrigger::BUTTON:
+    return "button";
+    break;
+  default:
+    return "unkown";
+    break;
+  }
+}
+
+String getBeamerModel(boolean shortversion = false)
 {
   String str;
   switch (beamerModel)
@@ -292,7 +321,15 @@ String getBeamerInfo()
     str = "Unkown";
     break;
   }
-  return str + " (" + (configIsDefault ? SWSERIAL_DEFAULT_BAUDRATE : cfg.beamerbaudrate) + " Baud)";
+
+  if (shortversion)
+  {
+    return str;
+  }
+  else
+  {
+    return str + " (" + (configIsDefault ? SWSERIAL_DEFAULT_BAUDRATE : cfg.beamerbaudrate) + " Baud)";
+  }
 }
 
 String getStateString()
@@ -317,14 +354,16 @@ String getStateString()
   }
 }
 
-void MQTTpublishStatus()
+void MQTTpublishStatus(StatusTrigger statusTrigger)
 {
   showMQTTAction();
   //Serial.println(F("-----------------------"));
-  Serial.print(F("Publish MQTT Status message"));
+  Serial.print(F("Publish MQTT Status message\n"));
+  Serial.print(F("State: "));
+  uint16_t mqtt_buffersize = client.getBufferSize();
 
-  char payload[200];
-  DynamicJsonDocument jsondoc(300);
+  char payload[mqtt_buffersize];
+  DynamicJsonDocument jsondoc(mqtt_buffersize);
 
   switch (getState())
   {
@@ -348,16 +387,25 @@ void MQTTpublishStatus()
     jsondoc["pwrstate"] = "unknown";
     break;
   }
-
+  jsondoc["trigger"] = getStatusTriggerString(statusTrigger);
+  jsondoc["model"] = getBeamerModel(true);
+  jsondoc["note"] = cfg.note;
   jsondoc["firmware"] = FIRMWARE_VERSION;
   jsondoc["wifi_rssi"] = WiFi.RSSI();
 
   size_t payloadSize = serializeJson(jsondoc, payload, sizeof(payload));
 
-  Serial.printf_P(PSTR("Message: %s\n"), payload);
-
   snprintf(buff, sizeof(buff), MQTT_PUBLISH_STATUS_TOPIC, mqtt_prefix, WiFi.hostname().c_str());
-  client.publish(buff, (uint8_t *)payload, (unsigned int)payloadSize, true);
+
+  Serial.printf_P(PSTR("Payload-/Buffersize: %i/%i (%i%%)\n"), payloadSize, mqtt_buffersize, (int)((100.00 / (double)mqtt_buffersize) * payloadSize));
+  Serial.printf_P(PSTR("Topic: %s\nMessage:"), buff);
+  serializeJsonPretty(jsondoc, Serial);
+  Serial.println();
+
+  if (!client.publish(buff, (uint8_t *)payload, (unsigned int)payloadSize, true))
+  {
+    Serial.println(F("Failed to publish message!"));
+  }
 
   lastPublishTime = millis();
 }
@@ -504,7 +552,7 @@ void pollDeviceState()
 
   if (currentBeamerState != lastBeamerState)
   {
-    MQTTpublishStatus();
+    MQTTpublishStatus(StatusTrigger::POLL);
   }
 }
 
@@ -869,7 +917,7 @@ void handleRoot()
   html += "</td>\n</tr>\n";
 
   html += "<tr>\n<td>Beamer model:</td>\n<td>";
-  html += getBeamerInfo();
+  html += getBeamerModel();
   html += "</td>\n</tr>\n";
 
   html += "<tr>\n<td>Power state:</td>\n<td>";
@@ -1210,7 +1258,7 @@ void MQTTprocessCommand(JsonObject &json)
   // Trigger status update
   if (json.containsKey("status"))
   {
-    MQTTpublishStatus();
+    MQTTpublishStatus(StatusTrigger::CMD);
   }
 }
 
@@ -1364,6 +1412,7 @@ void handleButton()
     {
       Serial.printf_P(PSTR("Button short press @ %lu\n"), millis());
       toggleState();
+      MQTTpublishStatus(StatusTrigger::BUTTON);
       buttonTimer = millis();
     }
     if ((millis() - buttonTimer >= TIME_BUTTON_LONGPRESS))
@@ -1574,7 +1623,7 @@ void loop(void)
       {
         if (millis() - lastPublishTime >= cfg.mqtt_periodic_update_interval * 1000)
         {
-          MQTTpublishStatus();
+          MQTTpublishStatus(StatusTrigger::PERIODIC);
         }
       }
     }
