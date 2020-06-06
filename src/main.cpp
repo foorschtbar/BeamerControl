@@ -12,7 +12,7 @@
 #include "settings.h" // Include my type definitions (must be in a separate file!)
 
 // Constants
-const char FIRMWARE_VERSION[] = "1.2";
+const char FIRMWARE_VERSION[] = "1.3";
 const char COMPILE_DATE[] = __DATE__ " " __TIME__;
 const int CURRENT_CONFIG_VERSION = 4;
 
@@ -27,6 +27,11 @@ const int TIME_BUTTON_LONGPRESS = 10000;
 const int state_PUBLISH_INTERVAL = 5000;
 const int MQTT_RECONNECT_INTERVAL = 2000;
 const int DEVICE_POLL_INTERVAL = 1000;
+
+const char MQTT_SUBSCRIBE_CMD_TOPIC1[] = "%s/cmd";               // Subscribe patter without hostname
+const char MQTT_SUBSCRIBE_CMD_TOPIC2[] = "%s/%s/cmd";            // Subscribe patter with hostname
+const char MQTT_PUBLISH_STATUS_TOPIC[] = "%s/%s/status";         // Public pattern for status (normal and LWT) with hostname
+const char MQTT_LWT_MESSAGE[] = "{\"bridge\":\"disconnected\"}"; // LWT message
 
 const int HWSERIAL_BAUD = 115200;
 const int SWSERIAL_DEFAULT_BAUDRATE = 19200;
@@ -311,47 +316,46 @@ String getStateString()
   }
 }
 
-void publishState()
+void MQTTpublishStatus()
 {
   showMQTTAction();
   //Serial.println(F("-----------------------"));
-  Serial.print(F("publishState - State"));
+  Serial.print(F("Publish MQTT Status message"));
 
   char payload[200];
-  DynamicJsonDocument jsondoc(200);
+  DynamicJsonDocument jsondoc(300);
 
   switch (getState())
   {
   /*case State::STARTING:
     Serial.println(F("Publish State STARTING"));
-    client.publish(cfg.mqtt_topicPublish, "#starting");
     break;*/
   case State::ON:
     Serial.println(F("ON"));
-    jsondoc["state"] = "on";
+    jsondoc["pwrstate"] = "on";
     //payload = '{"state"="on"}';
     break;
   /*case State::SHUTDOWN:
     Serial.println(F("Publish State SHUTDOWN"));
-    client.publish(cfg.mqtt_topicPublish, "#shutdown");
     break;*/
   case State::OFF:
     Serial.println(F("OFF"));
-    jsondoc["state"] = "off";
+    jsondoc["pwrstate"] = "off";
     break;
   case State::UNKNOWN:
     Serial.println(F("UNKNOWN"));
-    jsondoc["state"] = "unknown";
+    jsondoc["pwrstate"] = "unknown";
     break;
   }
 
   jsondoc["firmware"] = FIRMWARE_VERSION;
+  jsondoc["wifi_rssi"] = WiFi.RSSI();
 
   size_t payloadSize = serializeJson(jsondoc, payload, sizeof(payload));
 
-  Serial.printf_P(PSTR("publishState - Message: %s\n"), payload);
+  Serial.printf_P(PSTR("Message: %s\n"), payload);
 
-  snprintf(buff, sizeof(buff), "%s/%s/state", cfg.mqtt_prefix, WiFi.hostname().c_str());
+  snprintf(buff, sizeof(buff), MQTT_PUBLISH_STATUS_TOPIC, cfg.mqtt_prefix, WiFi.hostname().c_str());
   client.publish(buff, (uint8_t *)payload, (unsigned int)payloadSize, true);
 
   lastPublishTime = millis();
@@ -499,7 +503,7 @@ void pollDeviceState()
 
   if (currentBeamerState != lastBeamerState)
   {
-    publishState();
+    MQTTpublishStatus();
   }
 }
 
@@ -577,7 +581,7 @@ void toggleState()
     setState(State::ON);
     break;
   default:
-    setState(State::OFF);
+    setState(State::ON);
     break;
   }
 }
@@ -1174,35 +1178,45 @@ void handleSettings()
   }
 }
 
-void processCommand(JsonObject &json)
+void MQTTprocessCommand(JsonObject &json)
 {
-  Serial.println(F("processCommand"));
+  Serial.println(F("Processing incomming MQTT command"));
 
-  // Poweron
+  // Power on/off
   if (json.containsKey("poweron"))
   {
     if (json["poweron"].as<boolean>())
     {
       setState(State::ON);
     }
-    else
+    else if (!json["poweron"].as<boolean>())
+    {
+      setState(State::OFF);
+    }
+  }
+  else if (json.containsKey("pwrstate"))
+  {
+    if (strcmp_P(json["pwrstate"], PSTR("on")) == 0)
+    {
+      setState(State::ON);
+    }
+    else if (strcmp_P(json["pwrstate"], PSTR("off")) == 0)
     {
       setState(State::OFF);
     }
   }
 
-  // Force announcement
-  if (json.containsKey("state"))
+  // Trigger status update
+  if (json.containsKey("status"))
   {
-    publishState();
+    MQTTpublishStatus();
   }
 }
 
 void MQTTcallback(char *topic, byte *payload, unsigned int length)
 {
   showMQTTAction();
-  Serial.println(F("--- MQTTcallback ---"));
-  Serial.println(F("New Message"));
+  Serial.println(F("Neq MQTT message (MQTTcallback)"));
   Serial.print(F("> Lenght: "));
   Serial.println(length);
   Serial.print(F("> Topic: "));
@@ -1225,7 +1239,7 @@ void MQTTcallback(char *topic, byte *payload, unsigned int length)
       Serial.println();
 
       JsonObject object = jsondoc.as<JsonObject>();
-      processCommand(object);
+      MQTTprocessCommand(object);
     }
   }
 
@@ -1267,18 +1281,18 @@ boolean MQTTreconnect()
     client.setServer(cfg.mqtt_server, cfg.mqtt_port);
     client.setCallback(MQTTcallback);
 
-    //lastWillTopic
-    snprintf(buff, sizeof(buff), "%s/%s/state", cfg.mqtt_prefix, WiFi.hostname().c_str());
+    //last will and testament topic
+    snprintf(buff, sizeof(buff), MQTT_PUBLISH_STATUS_TOPIC, cfg.mqtt_prefix, WiFi.hostname().c_str());
 
-    if (client.connect(WiFi.hostname().c_str(), cfg.mqtt_user, cfg.mqtt_password, buff, 0, 1, "{\"state\":\"disconnected\"}"))
+    if (client.connect(WiFi.hostname().c_str(), cfg.mqtt_user, cfg.mqtt_password, buff, 0, 1, MQTT_LWT_MESSAGE))
     {
       Serial.println(F("connected!"));
 
-      snprintf(buff, sizeof(buff), "%s/command", cfg.mqtt_prefix);
+      snprintf(buff, sizeof(buff), MQTT_SUBSCRIBE_CMD_TOPIC1, cfg.mqtt_prefix);
       client.subscribe(buff);
       Serial.printf_P(PSTR("Subscribed to topic %s\n"), buff);
 
-      snprintf(buff, sizeof(buff), "%s/%s/command", cfg.mqtt_prefix, WiFi.hostname().c_str());
+      snprintf(buff, sizeof(buff), MQTT_SUBSCRIBE_CMD_TOPIC2, cfg.mqtt_prefix, WiFi.hostname().c_str());
       client.subscribe(buff);
       Serial.printf_P(PSTR("Subscribed to topic %s\n"), buff);
       return true;
@@ -1519,15 +1533,23 @@ void loop(void)
       if (mqttLastReconnectAttempt == 0 || (millis() - mqttLastReconnectAttempt) >= MQTT_RECONNECT_INTERVAL)
       {
         mqttLastReconnectAttempt = millis();
+
+        // switch off MQTT LED
+        analogWrite(HWPIN_LED_MQTT, 0);
+
+        // try to reconnect
         if (MQTTreconnect())
         {
+          // switch on MQTT LED
+          analogWrite(HWPIN_LED_MQTT, ledBrightness);
+
           mqttLastReconnectAttempt = 0;
         }
       }
     }
     else
     {
-      // Switch back on MQTT LED if we have server connection
+      // Switch on MQTT LED after MQTT action if we have server connection
       if ((millis() - ledTwoTime) > LED_MQTT_MIN_TIME)
       {
         analogWrite(HWPIN_LED_MQTT, ledBrightness);
@@ -1541,7 +1563,7 @@ void loop(void)
       {
         if (millis() - lastPublishTime >= cfg.mqtt_periodic_update_interval * 1000)
         {
-          publishState();
+          MQTTpublishStatus();
         }
       }
     }
