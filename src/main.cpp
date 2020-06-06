@@ -8,7 +8,6 @@
 #include <SoftwareSerial.h>
 #include <PubSubClient.h> // API Doc: https://pubsubclient.knolleary.net/api.html
 #include <ArduinoJson.h>  // API Doc: https://arduinojson.org/v6/doc/
-#include "config.h"
 #include <EEPROM.h>
 #include "settings.h" // Include my type definitions (must be in a separate file!)
 
@@ -80,7 +79,7 @@ bool configIsDefault = false; // true if no valid config found in eeprom and def
 
 // Runtime default config values
 BeamerModel beamerModel = BeamerModel::UNKNOWN;
-int ledBrightness = 1024;
+int ledBrightness = PWMRANGE;
 
 // Misc
 bool ledOneToggle = false;
@@ -315,42 +314,47 @@ String getStateString()
 void publishState()
 {
   showMQTTAction();
-  //Serial.println("-----------------------");
-  Serial.print("publishState: ");
+  //Serial.println(F("-----------------------"));
+  Serial.print(F("publishState - State"));
 
-  char payload[64];
-  DynamicJsonDocument jsondoc(500);
+  char payload[200];
+  DynamicJsonDocument jsondoc(200);
 
   switch (getState())
   {
   /*case State::STARTING:
-    Serial.println("Publish State STARTING");
+    Serial.println(F("Publish State STARTING"));
     client.publish(cfg.mqtt_topicPublish, "#starting");
     break;*/
   case State::ON:
-    Serial.println("ON");
+    Serial.println(F("ON"));
     jsondoc["state"] = "on";
     //payload = '{"state"="on"}';
     break;
   /*case State::SHUTDOWN:
-    Serial.println("Publish State SHUTDOWN");
+    Serial.println(F("Publish State SHUTDOWN"));
     client.publish(cfg.mqtt_topicPublish, "#shutdown");
     break;*/
   case State::OFF:
-    Serial.println(" OFF");
+    Serial.println(F("OFF"));
     jsondoc["state"] = "off";
     break;
   case State::UNKNOWN:
-    Serial.println(" UNKNOWN");
+    Serial.println(F("UNKNOWN"));
     jsondoc["state"] = "unknown";
     break;
   }
 
-  //jsondoc["firmware"] = FIRMWARE_VERSION;
+  jsondoc["firmware"] = FIRMWARE_VERSION;
+
   size_t payloadSize = serializeJson(jsondoc, payload, sizeof(payload));
 
-  snprintf(buff, sizeof(buff), "%s/%s/announce", cfg.mqtt_prefix, WiFi.hostname().c_str());
-  client.publish(buff, payload, payloadSize);
+  Serial.printf_P(PSTR("publishState - Message: %s\n"), payload);
+
+  snprintf(buff, sizeof(buff), "%s/%s/state", cfg.mqtt_prefix, WiFi.hostname().c_str());
+  client.publish(buff, (uint8_t *)payload, (unsigned int)payloadSize, true);
+
+  lastPublishTime = millis();
 }
 
 void pollDeviceState()
@@ -359,7 +363,7 @@ void pollDeviceState()
   unsigned int i = 0;
   State lastBeamerState = currentBeamerState;
 
-  Serial.print("pollDeviceState: ");
+  Serial.print(F("pollDeviceState: "));
 
   clearSerialBuffer();
 
@@ -368,7 +372,7 @@ void pollDeviceState()
   {
     currentBeamerState = demoBeamerState;
     Serial.print(getStateString());
-    Serial.print(" (Demomode)\n");
+    Serial.print(F(" (Demomode)\n"));
   }
   else if (beamerModel == BeamerModel::BENQ)
   {
@@ -379,7 +383,7 @@ void pollDeviceState()
     boolean readOn;
     readOn = false;
 
-    swSer.print("\r*pow=?#\r");
+    swSer.print(F("\r*pow=?#\r"));
 
     delay(100);
     while (swSer.available())
@@ -403,11 +407,11 @@ void pollDeviceState()
 
     Serial.println(buffer);
 
-    if (strcmp(buffer, "*POW=OFF#") == 0)
+    if (strcmp_P(buffer, PSTR("*POW=OFF#")) == 0)
     {
       currentBeamerState = State::OFF;
     }
-    else if (strcmp(buffer, "*POW=ON#") == 0)
+    else if (strcmp_P(buffer, PSTR("*POW=ON#")) == 0)
     {
       currentBeamerState = State::ON;
     }
@@ -418,7 +422,6 @@ void pollDeviceState()
   }
   else if (beamerModel == BeamerModel::CANON)
   {
-
     // Request    00H BFH 00H 00H 01H 02H C2H = 7
     // Response   20H BFH 01H xxH 10H DATA01 to DATA16 CKS = 22
     state_lenght = 22;
@@ -434,7 +437,7 @@ void pollDeviceState()
 
       byte b = swSer.read();
       //int i = int(swSer.read());
-      Serial.printf("%02x ", b);
+      Serial.printf_P(PSTR("%02x "), b);
 
       if (i < state_lenght)
       {
@@ -446,32 +449,32 @@ void pollDeviceState()
         i += 1;
       }
     }
-    buffer[i] = 0;
+    //buffer[i] = 0; nötig????
 
-    Serial.printf(" (Checksum: %02x, Last byte: %02x, Result: ", checksum, buffer[21]);
+    Serial.printf_P(PSTR(" (Checksum: %02x, Last byte: %02x, Result: "), checksum, buffer[21]);
 
     if (buffer[0] != 0x20)
     {
       // Response, but not success
-      Serial.println("No success response!)");
+      Serial.println(F("No success response!)"));
     }
     else if (buffer[21] != checksum)
     {
-      // Chekcsum wrong
-      Serial.println("Checksum wrong!)");
+      // Checksum wrong
+      Serial.println(F("Checksum wrong!)"));
       currentBeamerState = State::UNKNOWN;
     }
     else
     {
       // Checksum verified
-      Serial.println("Checksum verified!)");
+      Serial.println(F("Checksum verified!)"));
 
       switch (buffer[6])
       {
       case 0x00: // Idle
         currentBeamerState = State::OFF;
         break;
-      case 0x03: // Undocumented: "Starting"
+      case 0x03: // Undocumented: Starting?
         currentBeamerState = State::ON;
         break;
       case 0x04: // Power On
@@ -480,7 +483,7 @@ void pollDeviceState()
       case 0x05: // Cooling
         currentBeamerState = State::ON;
         break;
-      case 0x06: // Idle(Error Standby)
+      case 0x06: // Idle (Error Standby)
         currentBeamerState = State::OFF;
         break;
       default:
@@ -512,7 +515,7 @@ void setState(State state)
   // Switch Beamer ON
   if (state == State::ON)
   {
-    Serial.println("Sending power ON sequence...");
+    Serial.println(F("Sending power ON sequence..."));
     switch (beamerModel)
     {
     case BeamerModel::DEMO:
@@ -520,7 +523,7 @@ void setState(State state)
       digitalWrite(HWPIN_LED_BOARD, false); // Switch on onboard LED to display the demo state
       break;
     case BeamerModel::BENQ:
-      swSer.print("\r*pow=on#\r");
+      swSer.print(F("\r*pow=on#\r"));
       break;
     case BeamerModel::CANON:
     {
@@ -538,7 +541,7 @@ void setState(State state)
   }
   else
   {
-    Serial.println("Sending power OFF sequence...");
+    Serial.println(F("Sending power OFF sequence..."));
     switch (beamerModel)
     {
     case BeamerModel::DEMO:
@@ -546,7 +549,7 @@ void setState(State state)
       digitalWrite(HWPIN_LED_BOARD, true); // Switch off onboard LED to display the demo State
       break;
     case BeamerModel::BENQ:
-      swSer.print("\r*pow=off#\r");
+      swSer.print(F("\r*pow=off#\r"));
       break;
     case BeamerModel::CANON:
     {
@@ -590,17 +593,17 @@ void saveConfig()
 
 void eraseConfig()
 {
-  Serial.print("Erase EEPROM config...");
+  Serial.print(F("Erase EEPROM config..."));
   EEPROM.begin(512);
   for (uint16_t i = cfgStart; i < sizeof(cfg); i++)
   {
     EEPROM.write(i, 0);
-    //Serial.printf("Block %i of %i\n", i, sizeof(cfg));
+    //Serial.printf_P(PSTR("Block %i of %i\n"), i, sizeof(cfg));
   }
   delay(200);
   EEPROM.commit();
   EEPROM.end();
-  Serial.print("done\n");
+  Serial.print(F("done\n"));
 }
 
 void handleSwitch()
@@ -833,23 +836,23 @@ void handleRoot()
   int days = hr / 24;
   snprintf(timebuf, 20, " %02d:%02d:%02d:%02d", days, hr % 24, min % 60, sec % 60);
 
-  html += "<tr>\n<td>Uptime</td>\n<td>";
+  html += "<tr>\n<td>Uptime:</td>\n<td>";
   html += timebuf;
   html += "</td>\n</tr>\n";
 
-  html += "<tr>\n<td>Current Time</td>\n<td>";
+  html += "<tr>\n<td>Current time:</td>\n<td>";
   html += timeClient.getFormattedDate();
   html += "</td>\n</tr>\n";
 
-  html += "<tr>\n<td>Firmware</td>\n<td>v";
+  html += "<tr>\n<td>Firmware:</td>\n<td>v";
   html += FIRMWARE_VERSION;
   html += "</td>\n</tr>\n";
 
-  html += "<tr>\n<td>Compiled</td>\n<td>";
+  html += "<tr>\n<td>Compiled:</td>\n<td>";
   html += COMPILE_DATE;
   html += "</td>\n</tr>\n";
 
-  html += "<tr>\n<td>MQTT State</td>\n<td>";
+  html += "<tr>\n<td>MQTT state:</td>\n<td>";
   if (client.connected())
   {
     html += "Connected";
@@ -860,15 +863,15 @@ void handleRoot()
   }
   html += "</td>\n</tr>\n";
 
-  html += "<tr>\n<td>Beamer model</td>\n<td>";
+  html += "<tr>\n<td>Beamer model:</td>\n<td>";
   html += getBeamerInfo();
   html += "</td>\n</tr>\n";
 
-  html += "<tr>\n<td>Power state</td>\n<td>";
+  html += "<tr>\n<td>Power state:</td>\n<td>";
   html += getStateString();
   html += "</td>\n</tr>\n";
 
-  html += "<tr>\n<td>Note</td>\n<td>";
+  html += "<tr>\n<td>Note:</td>\n<td>";
   if (strcmp(cfg.note, "") == 0)
   {
     html += "---";
@@ -879,37 +882,37 @@ void handleRoot()
   }
   html += "</td>\n</tr>\n";
 
-  html += "<tr>\n<td>Hostname</td>\n<td>";
+  html += "<tr>\n<td>Hostname:</td>\n<td>";
   html += WiFi.hostname().c_str();
   html += "</td>\n</tr>\n";
 
-  html += "<tr>\n<td>IP address</td>\n<td>";
+  html += "<tr>\n<td>IP address:</td>\n<td>";
   html += WiFi.localIP().toString();
   html += "</td>\n</tr>\n";
 
-  html += "<tr>\n<td>Subnetmask</td>\n<td>";
+  html += "<tr>\n<td>Subnetmask:</td>\n<td>";
   html += WiFi.subnetMask().toString();
   html += "</td>\n</tr>\n";
 
-  html += "<tr>\n<td>Gateway</td>\n<td>";
+  html += "<tr>\n<td>Gateway:</td>\n<td>";
   html += WiFi.gatewayIP().toString();
   html += "</td>\n</tr>\n";
 
-  html += "<tr>\n<td>DNS-Server</td>\n<td>";
+  html += "<tr>\n<td>DNS server:</td>\n<td>";
   html += WiFi.dnsIP().toString();
   html += "</td>\n</tr>\n";
 
-  html += "<tr>\n<td>MAC</td>\n<td>";
+  html += "<tr>\n<td>MAC address:</td>\n<td>";
   html += WiFi.macAddress().c_str();
   html += "</td>\n</tr>\n";
 
-  html += "<tr>\n<td>Signal strength</td>\n<td>";
+  html += "<tr>\n<td>Signal strength:</td>\n<td>";
   html += dBm2Quality(WiFi.RSSI());
   html += "% (";
   html += WiFi.RSSI();
   html += "dBm)</td>\n</tr>\n";
 
-  html += "<tr>\n<td>Client IP</td>\n<td>";
+  html += "<tr>\n<td>Client IP:</td>\n<td>";
   html += server.client().remoteIP().toString().c_str();
   html += "</td>\n</tr>\n";
 
@@ -922,7 +925,7 @@ void handleRoot()
 void handleSettings()
 {
   showWEBAction();
-  Serial.println("Site: handleSettings");
+  Serial.println(F("Site: handleSettings"));
   // HTTP Auth
   if (!server.authenticate(cfg.admin_username, cfg.admin_password))
   {
@@ -930,7 +933,7 @@ void handleSettings()
   }
   else
   {
-    Serial.println("Auth okay!");
+    Serial.println(F("Auth okay!"));
     boolean saveandreboot = false;
     String value;
     if (server.method() == HTTP_POST)
@@ -1029,13 +1032,14 @@ void handleSettings()
     {
       HTMLHeader("Settings");
 
-      html += "Current Settings Source is ";
-      html += (configIsDefault ? "NOT " : "");
-      html += "from EEPROM.<br />";
-      html += "<br />\n";
-
       html += "<form action='/settings' method='post'>\n";
       html += "<table>\n";
+
+      html += "<tr>\n<td>\nSettings source:</td>\n";
+      html += "<td><input type='text' disabled value='";
+      html += (configIsDefault ? "Default settings" : "EEPROM");
+      html += "'></td>\n</tr>\n";
+
       html += "<tr>\n";
       html += "<td>Hostname:</td>\n";
       html += "<td><input name='hostname' type='text' maxlength='30' autocapitalize='none' placeholder='";
@@ -1071,17 +1075,17 @@ void handleSettings()
       html += cfg.note;
       html += "'></td>\n</tr>\n";
 
-      html += "<tr>\n<td>\nAdminaccess Username:</td>\n";
+      html += "<tr>\n<td>\nAdmin username:</td>\n";
       html += "<td><input name='admin_username' type='text' maxlength='30' autocapitalize='none' value='";
       html += cfg.admin_username;
       html += "'></td>\n</tr>\n";
 
-      html += "<tr>\n<td>\nAdminaccess Password:</td>\n";
+      html += "<tr>\n<td>\nAdmin password:</td>\n";
       html += "<td><input name='admin_password' type='password' maxlength='30' value='";
       html += cfg.admin_password;
       html += "'></td>\n</tr>\n";
 
-      html += "<tr>\n<td>LED Brightness:</td>\n";
+      html += "<tr>\n<td>LED brightness:</td>\n";
       html += "<td><select name='led_brightness'>";
       html += "<option value='25'";
       html += (cfg.led_brightness == 25 ? " selected" : "");
@@ -1098,7 +1102,7 @@ void handleSettings()
       html += "</select>";
       html += "</td>\n</tr>\n";
 
-      html += "<tr>\n<td>Beamer Model:</td>\n";
+      html += "<tr>\n<td>Beamer model:</td>\n";
       html += "<td><select name='beamermodel'>";
       html += "<option value='benq'";
       html += (strcmp("benq", cfg.beamermodel) == 0 ? " selected" : "");
@@ -1123,32 +1127,32 @@ void handleSettings()
       html += "</select>";
       html += "</td>\n</tr>\n";
 
-      html += "<tr>\n<td>\nMQTT Server:</td>\n";
+      html += "<tr>\n<td>\nMQTT server:</td>\n";
       html += "<td><input name='mqtt_server' type='text' maxlength='30' autocapitalize='none' value='";
       html += cfg.mqtt_server;
       html += "'></td>\n</tr>\n";
 
-      html += "<tr>\n<td>\nMQTT Port:</td>\n";
+      html += "<tr>\n<td>\nMQTT port:</td>\n";
       html += "<td><input name='mqtt_port' type='text' maxlength='5' autocapitalize='none' value='";
       html += cfg.mqtt_port;
       html += "'> (Default 1883)</td>\n</tr>\n";
 
-      html += "<tr>\n<td>\nMQTT User:</td>\n";
+      html += "<tr>\n<td>\nMQTT username:</td>\n";
       html += "<td><input name='mqtt_user' type='text' maxlength='50' autocapitalize='none' value='";
       html += cfg.mqtt_user;
       html += "'></td>\n</tr>\n";
 
-      html += "<tr>\n<td>\nMQTT Password:</td>\n";
+      html += "<tr>\n<td>\nMQTT password:</td>\n";
       html += "<td><input name='mqtt_password' type='password' maxlength='50' autocapitalize='none' value='";
       html += cfg.mqtt_password;
       html += "'></td>\n</tr>\n";
 
-      html += "<tr>\n<td>\nMQTT Prefix:</td>\n";
+      html += "<tr>\n<td>\nMQTT prefix:</td>\n";
       html += "<td><input name='mqtt_prefix' type='text' maxlength='30' autocapitalize='none' value='";
       html += cfg.mqtt_prefix;
       html += "'></td>\n</tr>\n";
 
-      html += "<tr>\n<td>\nMQTT Periodic Update Interval:</td>\n";
+      html += "<tr>\n<td>\nMQTT periodic update interval:</td>\n";
       html += "<td><input name='mqtt_periodic_update_interval' type='text' maxlength='5' autocapitalize='none' value='";
       html += cfg.mqtt_periodic_update_interval;
       html += "'> (in sec. 0 to disable)</td>\n</tr>\n";
@@ -1172,7 +1176,7 @@ void handleSettings()
 
 void processCommand(JsonObject &json)
 {
-  Serial.println("processCommand");
+  Serial.println(F("processCommand"));
 
   // Poweron
   if (json.containsKey("poweron"))
@@ -1188,7 +1192,7 @@ void processCommand(JsonObject &json)
   }
 
   // Force announcement
-  if (json.containsKey("announce"))
+  if (json.containsKey("state"))
   {
     publishState();
   }
@@ -1197,11 +1201,11 @@ void processCommand(JsonObject &json)
 void MQTTcallback(char *topic, byte *payload, unsigned int length)
 {
   showMQTTAction();
-  Serial.println("--- MQTTcallback ---");
-  Serial.println("New Message");
-  Serial.print("> Lenght: ");
+  Serial.println(F("--- MQTTcallback ---"));
+  Serial.println(F("New Message"));
+  Serial.print(F("> Lenght: "));
   Serial.println(length);
-  Serial.print("> Topic: ");
+  Serial.print(F("> Topic: "));
   Serial.println(topic);
 
   if (length)
@@ -1210,13 +1214,13 @@ void MQTTcallback(char *topic, byte *payload, unsigned int length)
     DeserializationError err = deserializeJson(jsondoc, payload);
     if (err)
     {
-      Serial.print("deserializeJson() failed: ");
+      Serial.print(F("deserializeJson() failed: "));
       Serial.println(err.c_str());
     }
     else
     {
 
-      Serial.print("> JSON: ");
+      Serial.print(F("> JSON: "));
       serializeJsonPretty(jsondoc, Serial);
       Serial.println();
 
@@ -1250,10 +1254,11 @@ void MQTTcallback(char *topic, byte *payload, unsigned int length)
 
 boolean MQTTreconnect()
 {
-  Serial.printf("Connecting to MQTT Broker \"%s\"...", cfg.mqtt_server);
+
+  Serial.printf_P(PSTR("Connecting to MQTT Broker \"%s:%i\"..."), cfg.mqtt_server, cfg.mqtt_port);
   if (strcmp(cfg.mqtt_server, "") == 0)
   {
-    Serial.println("failed. No server configured.");
+    Serial.println(F("failed. No server configured."));
     return false;
   }
   else
@@ -1262,24 +1267,25 @@ boolean MQTTreconnect()
     client.setServer(cfg.mqtt_server, cfg.mqtt_port);
     client.setCallback(MQTTcallback);
 
-    snprintf(buff, sizeof(buff), "%s/%s/announce", cfg.mqtt_prefix, WiFi.hostname().c_str());
+    //lastWillTopic
+    snprintf(buff, sizeof(buff), "%s/%s/state", cfg.mqtt_prefix, WiFi.hostname().c_str());
 
-    if (client.connect(WiFi.hostname().c_str(), cfg.mqtt_user, cfg.mqtt_password, buff, 0, 0, "{\"state\":\"disconnected\"}"))
+    if (client.connect(WiFi.hostname().c_str(), cfg.mqtt_user, cfg.mqtt_password, buff, 0, 1, "{\"state\":\"disconnected\"}"))
     {
-      Serial.println("connected!");
+      Serial.println(F("connected!"));
 
       snprintf(buff, sizeof(buff), "%s/command", cfg.mqtt_prefix);
       client.subscribe(buff);
-      Serial.printf("Subscribed to topic %s\n", buff);
+      Serial.printf_P(PSTR("Subscribed to topic %s\n"), buff);
 
       snprintf(buff, sizeof(buff), "%s/%s/command", cfg.mqtt_prefix, WiFi.hostname().c_str());
       client.subscribe(buff);
-      Serial.printf("Subscribed to topic %s\n", buff);
+      Serial.printf_P(PSTR("Subscribed to topic %s\n"), buff);
       return true;
     }
     else
     {
-      Serial.print("failed with state ");
+      Serial.print(F("failed with state "));
       Serial.println(client.state());
       return false;
     }
@@ -1336,18 +1342,18 @@ void loadConfig()
 void handleButton()
 {
   bool inp = digitalRead(HWPIN_PUSHBUTTON);
-  //Serial.printf("Button state: %d\n", inp);
+  //Serial.printf_P(PSTR("Button state: %d\n"), inp);
   if (inp == 0) // Button pressed
   {
     if (inp != previousButtonState)
     {
-      Serial.printf("Button short press @ %lu\n", millis());
+      Serial.printf_P(PSTR("Button short press @ %lu\n"), millis());
       toggleState();
       buttonTimer = millis();
     }
     if ((millis() - buttonTimer >= TIME_BUTTON_LONGPRESS))
     {
-      Serial.printf("Button long press @ %lu\n", millis());
+      Serial.printf_P(PSTR("Button long press @ %lu\n"), millis());
       eraseConfig();
       ESP.reset();
     }
@@ -1376,15 +1382,15 @@ void setup(void)
 
   Serial.begin(HWSERIAL_BAUD);
   delay(1000);
-  Serial.printf("\nWelcome to BeamerControl v%s\n", FIRMWARE_VERSION);
+  Serial.printf_P(PSTR("\nWelcome to BeamerControl v%s\n"), FIRMWARE_VERSION);
   WiFi.mode(WIFI_OFF);
 
   // AP or Infrastructire mode
   if (configIsDefault)
   {
     // Start AP
-    Serial.println("Default Config loaded.");
-    Serial.println("Starting WiFi SoftAP");
+    Serial.println(F("Default Config loaded."));
+    Serial.println(F("Starting WiFi SoftAP"));
     WiFi.softAP("BeamerControl", "");
     analogWrite(HWPIN_LED_WIFI, ledBrightness);
   }
@@ -1392,7 +1398,8 @@ void setup(void)
   {
 
     // LED brightness
-    ledBrightness = (1024 / 100) * cfg.led_brightness;
+    ledBrightness = (PWMRANGE / 100.00) * cfg.led_brightness;
+    Serial.printf("LED brightness: %i/%i (%i%%)\n", ledBrightness, PWMRANGE, cfg.led_brightness);
 
     WiFi.mode(WIFI_STA);
     if (strcmp(cfg.hostname, "") != 0)
@@ -1401,13 +1408,13 @@ void setup(void)
     }
     WiFi.begin(cfg.wifi_ssid, cfg.wifi_psk);
 
-    Serial.printf("Connecing to '%s'. Please wait", cfg.wifi_ssid);
+    Serial.printf_P(PSTR("Connecing to '%s'. Please wait"), cfg.wifi_ssid);
 
     // Wait for connection
     while (WiFi.status() != WL_CONNECTED)
     {
       delay(250);
-      Serial.print(".");
+      Serial.print(F("."));
       if (ledOneToggle)
       {
         analogWrite(HWPIN_LED_WIFI, ledBrightness);
@@ -1421,22 +1428,22 @@ void setup(void)
       handleButton();
     }
 
-    Serial.printf("\nConnected to '%s'\n", cfg.wifi_ssid);
+    Serial.printf_P(PSTR("\nConnected to '%s'\n"), cfg.wifi_ssid);
     WiFi.printDiag(Serial);
-    Serial.printf("IP address: %s\n", WiFi.localIP().toString().c_str());
+    Serial.printf_P(PSTR("IP address: %s\n"), WiFi.localIP().toString().c_str());
 
     analogWrite(HWPIN_LED_WIFI, ledBrightness);
 
     // Beamermodel
-    if (strcmp(cfg.beamermodel, "demo") == 0)
+    if (strcmp_P(cfg.beamermodel, PSTR("demo")) == 0)
     {
       beamerModel = BeamerModel::DEMO;
     }
-    else if (strcmp(cfg.beamermodel, "benq") == 0)
+    else if (strcmp_P(cfg.beamermodel, PSTR("benq")) == 0)
     {
       beamerModel = BeamerModel::BENQ;
     }
-    else if (strcmp(cfg.beamermodel, "canon") == 0)
+    else if (strcmp_P(cfg.beamermodel, PSTR("canon")) == 0)
     {
       beamerModel = BeamerModel::CANON;
     }
@@ -1454,7 +1461,7 @@ void setup(void)
     // MDNS responder
     if (MDNS.begin(cfg.hostname))
     {
-      Serial.println("MDNS responder started");
+      Serial.println(F("MDNS responder started"));
     }
 
     // NTPClient
@@ -1465,16 +1472,16 @@ void setup(void)
   httpUpdater.setup(&server, "/dofwupdate", cfg.admin_username, cfg.admin_password);
 
   // Webserver
-  server.on("/", handleRoot);
-  server.on("/settings", handleSettings);
-  server.on("/fwupdate", handleFWUpdate);
-  server.on("/switch", handleSwitch);
-  server.on("/reboot", handleReboot);
-  server.on("/wifiscan", handleWiFiScan);
+  server.on(F("/"), handleRoot);
+  server.on(F("/settings"), handleSettings);
+  server.on(F("/fwupdate"), handleFWUpdate);
+  server.on(F("/switch"), handleSwitch);
+  server.on(F("/reboot"), handleReboot);
+  server.on(F("/wifiscan"), handleWiFiScan);
   server.onNotFound(handleNotFound);
   server.begin();
 
-  Serial.println("HTTP server started");
+  Serial.println(F("HTTP server started"));
 }
 
 void loop(void)
@@ -1534,7 +1541,6 @@ void loop(void)
       {
         if (millis() - lastPublishTime >= cfg.mqtt_periodic_update_interval * 1000)
         {
-          lastPublishTime = millis();
           publishState();
         }
       }

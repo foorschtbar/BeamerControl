@@ -2,39 +2,25 @@ import serial
 import struct
 import sys
 
+# Setup serial connection
 ser = serial.Serial(
-    port='/dev/ttyUSB1',
-    baudrate=19200,
-    parity=serial.PARITY_NONE,
-    stopbits=serial.STOPBITS_ONE,
-    bytesize=serial.EIGHTBITS,
-    timeout=0.1
+	port='/dev/ttyUSB0',				# USB-to-RS232-Converter
+	baudrate=19200,						# Baud rate 19200 bps 
+	parity=serial.PARITY_NONE,			# Parity bit:   No parity 
+	stopbits=serial.STOPBITS_ONE,		# Stop bits:    1 bit 
+	bytesize=serial.EIGHTBITS,			# Data length:  8 bits 
+	timeout=0.1
 )
 
-print(ser.isOpen())
+print("print("Serial isOpen:", ser.isOpen())", ser.isOpen())
 
-##02H 00H 00H 00H 00H 02H
-#thestring = "\x02\x00\x00\x00\x00\x02"
-##\x7E\xFF\x03\x00\x01\x00\x02\x0A\x01\xC8\x04\xD0\x01\x02\x80\x00\x00\x00\x00\x8E\xE7\z7E"
-#data = struct.pack(hex(thestring))
-#data = struct.pack(hex, 0x7E, 0xFF, 0x03, 0x00, 0x01, 0x00, 0x02, 0x0A, 0x01, 0xC8,      0x04, 0xD0, 0x01, 0x02, 0x80, 0x00, 0x00, 0x00, 0x00, 0x8E, 0xE7, 0x7E)
-#ser.write(data)
-#s = ser.read(1)
-#print(s)
-#ser.close()
-
-# Pinout:
-# MiniDIN8 https://static.quade.co/wp-content/uploads/2018/05/OfS0683.p_10-foot-MiniDIN-8-Pin-Male-to-Female-Extension-Cable-for-Gaming-Analog-Joysticks.gif
-# RS232      MiniDIN8
-# 2 RX -->   1 TX
-# 5 GND -->  4 GND
-# 3 TX	-->  7 RX
-
+# Parse arguments
 arguments = len(sys.argv) - 1
 if arguments != 1:
 	print "Missing arguments!"
 	sys.exit()
 
+# Create command
 packet = bytearray()
 arg = sys.argv[1].lower().strip()
 if arg == "on":
@@ -53,6 +39,15 @@ elif arg == "off":
 	packet.append(0x00)
 	packet.append(0x00)
 	packet.append(0x03)
+elif arg == "status":
+	print "send status"
+	packet.append(0x00)
+	packet.append(0xbf)
+	packet.append(0x00)
+	packet.append(0x00)
+	packet.append(0x01)
+	packet.append(0x02)
+	packet.append(0xc2)
 elif arg == "showoff":
 	print "send showoff"
 	packet.append(0x02)
@@ -72,12 +67,16 @@ elif arg == "showon":
 else:
 	print "unkown command:",arg
 	sys.exit();
+	
+# Send command
 ser.write(packet)
+
+# Read response
 while True:
-  s = ser.read(1)
-  if len(s) != 1: 
-    break
-  print(hex(ord(s))),
+	s = ser.read(1)
+	if len(s) != 1: 
+		break
+	print("{:02X}".format(ord(s))),
+
+# Close serial connection
 ser.close();
-
-
