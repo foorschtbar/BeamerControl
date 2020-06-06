@@ -12,7 +12,7 @@
 #include "settings.h" // Include my type definitions (must be in a separate file!)
 
 // Constants
-const char FIRMWARE_VERSION[] = "1.3";
+const char FIRMWARE_VERSION[] = "1.4";
 const char COMPILE_DATE[] = __DATE__ " " __TIME__;
 const int CURRENT_CONFIG_VERSION = 4;
 
@@ -358,7 +358,7 @@ void MQTTpublishStatus(StatusTrigger statusTrigger)
 {
   showMQTTAction();
   //Serial.println(F("-----------------------"));
-  Serial.print(F("Publish MQTT Status message\n"));
+  Serial.print(F("Publish MQTT status message\n"));
   Serial.print(F("State: "));
   uint16_t mqtt_buffersize = client.getBufferSize();
 
@@ -373,7 +373,6 @@ void MQTTpublishStatus(StatusTrigger statusTrigger)
   case State::ON:
     Serial.println(F("ON"));
     jsondoc["pwrstate"] = "on";
-    //payload = '{"state"="on"}';
     break;
   /*case State::SHUTDOWN:
     Serial.println(F("Publish State SHUTDOWN"));
@@ -397,8 +396,8 @@ void MQTTpublishStatus(StatusTrigger statusTrigger)
 
   snprintf(buff, sizeof(buff), MQTT_PUBLISH_STATUS_TOPIC, mqtt_prefix, WiFi.hostname().c_str());
 
-  Serial.printf_P(PSTR("Payload-/Buffersize: %i/%i (%i%%)\n"), payloadSize, mqtt_buffersize, (int)((100.00 / (double)mqtt_buffersize) * payloadSize));
-  Serial.printf_P(PSTR("Topic: %s\nMessage:"), buff);
+  Serial.printf_P(PSTR("Payload-/Buffersize: %i/%i bytes (%i%%)\n"), payloadSize, mqtt_buffersize, (int)((100.00 / (double)mqtt_buffersize) * payloadSize));
+  Serial.printf_P(PSTR("Topic: %s\nMessage: "), buff);
   serializeJsonPretty(jsondoc, Serial);
   Serial.println();
 
