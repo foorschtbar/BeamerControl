@@ -82,7 +82,7 @@ ESP8266HTTPUpdateServer httpUpdater;
 
 // NTP Client
 WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "europe.pool.ntp.org", 3600, 60000);
+NTPClient timeClient(ntpUDP, "europe.pool.ntp.org", 0, 60000);
 
 // Config
 uint16_t cfgStart = 0;        // Start address in EEPROM for structure 'cfg'
@@ -386,9 +386,11 @@ void MQTTpublishStatus(StatusTrigger statusTrigger)
     jsondoc["pwrstate"] = "unknown";
     break;
   }
+
   jsondoc["trigger"] = getStatusTriggerString(statusTrigger);
   jsondoc["model"] = getBeamerModel(true);
   jsondoc["note"] = cfg.note;
+  jsondoc["timestamp"] = timeClient.getEpochTime();
   jsondoc["firmware"] = FIRMWARE_VERSION;
   jsondoc["wifi_rssi"] = WiFi.RSSI();
 
@@ -509,6 +511,7 @@ void pollDeviceState()
     {
       // Response, but not success
       Serial.println(F("No success response!)"));
+      currentBeamerState = State::UNKNOWN;
     }
     else if (buffer[21] != checksum)
     {
@@ -894,7 +897,7 @@ void handleRoot()
 
   html += "<tr>\n<td>Current time:</td>\n<td>";
   html += timeClient.getFormattedDate();
-  html += "</td>\n</tr>\n";
+  html += " (UTC)</td>\n</tr>\n";
 
   html += "<tr>\n<td>Firmware:</td>\n<td>v";
   html += FIRMWARE_VERSION;
@@ -962,7 +965,7 @@ void handleRoot()
   html += dBm2Quality(WiFi.RSSI());
   html += "% (";
   html += WiFi.RSSI();
-  html += "dBm)</td>\n</tr>\n";
+  html += " dBm)</td>\n</tr>\n";
 
   html += "<tr>\n<td>Client IP:</td>\n<td>";
   html += server.client().remoteIP().toString().c_str();
