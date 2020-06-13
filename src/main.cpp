@@ -11,16 +11,25 @@
 #include <EEPROM.h>
 #include "settings.h" // Include my type definitions (must be in a separate file!)
 
-// Constants
+// ++++++++++++++++++++++++++++++++++++++++
+//
+// CONSTANTS
+//
+// ++++++++++++++++++++++++++++++++++++++++
+
+// Constants - Misc
 const char FIRMWARE_VERSION[] = "1.5";
 const char COMPILE_DATE[] = __DATE__ " " __TIME__;
 const int CURRENT_CONFIG_VERSION = 4;
+const int HTTP_PORT = 80;
 
+// Constants - HW pins
 const int HWPIN_PUSHBUTTON = D3;
 const int HWPIN_LED_BOARD = LED_BUILTIN;
 const int HWPIN_LED_WIFI = D8;
 const int HWPIN_LED_MQTT = D7;
 
+// Constants - Intervals
 const int LED_MQTT_MIN_TIME = 500;
 const int LED_WEB_MIN_TIME = 500;
 const int TIME_BUTTON_LONGPRESS = 10000;
@@ -28,13 +37,26 @@ const int state_PUBLISH_INTERVAL = 5000;
 const int MQTT_RECONNECT_INTERVAL = 2000;
 const int DEVICE_POLL_INTERVAL = 1000;
 
+// Constants - MQTT
 const char MQTT_SUBSCRIBE_CMD_TOPIC1[] = "%scmd";                // Subscribe patter without hostname
 const char MQTT_SUBSCRIBE_CMD_TOPIC2[] = "%s%s/cmd";             // Subscribe patter with hostname
 const char MQTT_PUBLISH_STATUS_TOPIC[] = "%s%s/status";          // Public pattern for status (normal and LWT) with hostname
 const char MQTT_LWT_MESSAGE[] = "{\"bridge\":\"disconnected\"}"; // LWT message
 
+// Constants - NTP
+const char NTP_SERVER[] = "europe.pool.ntp.org";
+const long NTP_TIME_OFFSET = 0;                  // in s
+const unsigned long NTP_UPDATE_INTERVAL = 60000; // in ms
+
+// Constants - Serial
 const int HWSERIAL_BAUD = 115200;
 const int SWSERIAL_DEFAULT_BAUDRATE = 19200;
+
+// ++++++++++++++++++++++++++++++++++++++++
+//
+// ENUMS
+//
+// ++++++++++++++++++++++++++++++++++++++++
 
 enum class State
 {
@@ -59,14 +81,14 @@ enum class StatusTrigger
   BUTTON
 };
 
-void HTMLHeader(const char section[], unsigned int refresh = 0, const char url[] = "/");
-
-// buffers
-String html;
-char buff[255];
+// ++++++++++++++++++++++++++++++++++++++++
+//
+// LIBS
+//
+// ++++++++++++++++++++++++++++++++++++++++
 
 // Webserver
-ESP8266WebServer server(80);
+ESP8266WebServer server(HTTP_PORT);
 
 // Wifi Client
 WiFiClient espClient;
@@ -82,7 +104,17 @@ ESP8266HTTPUpdateServer httpUpdater;
 
 // NTP Client
 WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "europe.pool.ntp.org", 0, 60000);
+NTPClient timeClient(ntpUDP, NTP_SERVER, NTP_TIME_OFFSET, NTP_UPDATE_INTERVAL);
+
+// ++++++++++++++++++++++++++++++++++++++++
+//
+// VARS
+//
+// ++++++++++++++++++++++++++++++++++++++++
+
+// Buffers
+String html;
+char buff[255];
 
 // Config
 uint16_t cfgStart = 0;        // Start address in EEPROM for structure 'cfg'
@@ -93,13 +125,12 @@ bool configIsDefault = false; // true if no valid config found in eeprom and def
 BeamerModel beamerModel = BeamerModel::UNKNOWN;
 int ledBrightness = PWMRANGE;
 
-// Misc
+// Variables will change
 bool ledOneToggle = false;
 bool ledTwoToggle = false;
 State currentBeamerState = State::UNKNOWN;
 State demoBeamerState = State::UNKNOWN;
 char mqtt_prefix[50];
-
 unsigned long lastDevicePollTime = 0;       // will store last beamer state time
 unsigned long lastPublishTime = 0;          // will store last publish time
 unsigned long ledOneTime = 0;               // will store last time LED was updated
@@ -107,6 +138,14 @@ unsigned long ledTwoTime = 0;               // will store last time LED was upda
 unsigned long mqttLastReconnectAttempt = 0; // will store last time reconnect to mqtt broker
 bool previousButtonState = 1;               // will store last Button state. 1 = unpressed, 0 = pressed
 unsigned long buttonTimer = 0;              // will store how long button was pressed
+
+void HTMLHeader(const char section[], unsigned int refresh = 0, const char url[] = "/");
+
+// ++++++++++++++++++++++++++++++++++++++++
+//
+// MAIN CODE
+//
+// ++++++++++++++++++++++++++++++++++++++++
 
 void clearSerialBuffer()
 {
