@@ -9,7 +9,7 @@
 #include <PubSubClient.h> // API Doc: https://pubsubclient.knolleary.net/api.html
 #include <ArduinoJson.h>  // API Doc: https://arduinojson.org/v6/doc/
 #include <EEPROM.h>
-#include "settings.h" // Include my type definitions (must be in a separate file!)
+#include "settings.h"
 
 // ++++++++++++++++++++++++++++++++++++++++
 //
@@ -29,7 +29,7 @@ const int HWPIN_LED_BOARD = LED_BUILTIN;
 const int HWPIN_LED_WIFI = D8;
 const int HWPIN_LED_MQTT = D7;
 
-// Constants - Intervals
+// Constants - Intervals (all in ms)
 const int LED_MQTT_MIN_TIME = 500;
 const int LED_WEB_MIN_TIME = 500;
 const int TIME_BUTTON_LONGPRESS = 10000;
