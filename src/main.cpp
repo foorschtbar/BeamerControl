@@ -12,7 +12,7 @@
 #include "settings.h" // Include my type definitions (must be in a separate file!)
 
 // Constants
-const char FIRMWARE_VERSION[] = "1.4";
+const char FIRMWARE_VERSION[] = "1.5";
 const char COMPILE_DATE[] = __DATE__ " " __TIME__;
 const int CURRENT_CONFIG_VERSION = 4;
 
@@ -1142,6 +1142,15 @@ void handleSettings()
 
       html += "<tr>\n<td>LED brightness:</td>\n";
       html += "<td><select name='led_brightness'>";
+      html += "<option value='5'";
+      html += (cfg.led_brightness == 5 ? " selected" : "");
+      html += ">5%</option>";
+      html += "<option value='10'";
+      html += (cfg.led_brightness == 10 ? " selected" : "");
+      html += ">10%</option>";
+      html += "<option value='15'";
+      html += (cfg.led_brightness == 15 ? " selected" : "");
+      html += ">15%</option>";
       html += "<option value='25'";
       html += (cfg.led_brightness == 25 ? " selected" : "");
       html += ">25%</option>";
