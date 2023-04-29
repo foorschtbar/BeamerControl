@@ -1531,6 +1531,11 @@ void setup(void)
       WiFi.hostname(cfg.hostname);
     }
     WiFi.begin(cfg.wifi_ssid, cfg.wifi_psk);
+    if (strcmp(cfg.hostname, "") != 0)
+    {
+      WiFi.hostname(cfg.hostname);
+    }
+    WiFi.setHostname();
 
     Serial.printf_P(PSTR("Connecing to '%s'. Please wait"), cfg.wifi_ssid);
 
