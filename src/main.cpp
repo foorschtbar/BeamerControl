@@ -22,6 +22,7 @@ const char FIRMWARE_VERSION[] = "1.5";
 const char COMPILE_DATE[] = __DATE__ " " __TIME__;
 const int CURRENT_CONFIG_VERSION = 4;
 const int HTTP_PORT = 80;
+const int PWMRANGE = 1023;
 
 // Constants - HW pins
 const int HWPIN_PUSHBUTTON = D3;
@@ -1535,7 +1536,6 @@ void setup(void)
     {
       WiFi.hostname(cfg.hostname);
     }
-    WiFi.setHostname();
 
     Serial.printf_P(PSTR("Connecing to '%s'. Please wait"), cfg.wifi_ssid);
 
