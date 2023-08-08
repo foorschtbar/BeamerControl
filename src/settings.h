@@ -27,6 +27,9 @@ typedef struct
 
     uint8_t led_brightness; // in percent
 
+    char api_username[30];
+    char api_password[30];
+
 } configData_t;
 
 #endif

@@ -18,9 +18,9 @@
 // ++++++++++++++++++++++++++++++++++++++++
 
 // Constants - Misc
-const char FIRMWARE_VERSION[] = "1.5";
+const char FIRMWARE_VERSION[] = "1.6";
 const char COMPILE_DATE[] = __DATE__ " " __TIME__;
-const int CURRENT_CONFIG_VERSION = 4;
+const int CURRENT_CONFIG_VERSION = 5;
 const int HTTP_PORT = 80;
 const int PWMRANGE = 1023;
 
@@ -61,9 +61,9 @@ const int SWSERIAL_DEFAULT_BAUDRATE = 19200;
 
 enum class State
 {
-  //STARTING,
+  // STARTING,
   ON,
-  //SHUTDOWN,
+  // SHUTDOWN,
   OFF,
   UNKNOWN
 };
@@ -80,6 +80,11 @@ enum class StatusTrigger
   POLL,
   CMD,
   BUTTON
+};
+enum class APICMD
+{
+  ON,
+  OFF
 };
 
 // ++++++++++++++++++++++++++++++++++++++++
@@ -397,7 +402,7 @@ String getStateString()
 void MQTTpublishStatus(StatusTrigger statusTrigger)
 {
   showMQTTAction();
-  //Serial.println(F("-----------------------"));
+  // Serial.println(F("-----------------------"));
   Serial.print(F("Publish MQTT status message\n"));
   Serial.print(F("State: "));
   uint16_t mqtt_buffersize = client.getBufferSize();
@@ -530,7 +535,7 @@ void pollDeviceState()
     {
 
       byte b = swSer.read();
-      //int i = int(swSer.read());
+      // int i = int(swSer.read());
       Serial.printf_P(PSTR("%02x "), b);
 
       if (i < state_lenght)
@@ -543,7 +548,7 @@ void pollDeviceState()
         i += 1;
       }
     }
-    //buffer[i] = 0; nötig????
+    // buffer[i] = 0; nötig????
 
     Serial.printf_P(PSTR(" (Checksum: %02x, Last byte: %02x, Result: "), checksum, buffer[21]);
 
@@ -693,12 +698,38 @@ void eraseConfig()
   for (uint16_t i = cfgStart; i < sizeof(cfg); i++)
   {
     EEPROM.write(i, 0);
-    //Serial.printf_P(PSTR("Block %i of %i\n"), i, sizeof(cfg));
+    // Serial.printf_P(PSTR("Block %i of %i\n"), i, sizeof(cfg));
   }
   delay(200);
   EEPROM.commit();
   EEPROM.end();
   Serial.print(F("done\n"));
+}
+
+void handleAPI(APICMD api)
+{
+  showWEBAction();
+  if (!server.authenticate(cfg.api_username, cfg.api_password))
+  {
+    return server.requestAuthentication();
+  }
+  else
+  {
+    switch (api)
+    {
+    case APICMD::ON:
+      setState(State::ON);
+      server.send(200, "text/plain", "on");
+      break;
+    case APICMD::OFF:
+      setState(State::OFF);
+      server.send(200, "text/plain", "off");
+      break;
+    default:
+      server.send(200, "text/plain", "unknown");
+      break;
+    }
+  }
 }
 
 void handleSwitch()
@@ -1112,6 +1143,14 @@ void handleSettings()
         else if (server.argName(i) == "led_brightness")
         {
           cfg.led_brightness = value.toInt();
+        } // HTTP Auth API Username
+        else if (server.argName(i) == "api_username")
+        {
+          value.toCharArray(cfg.api_username, sizeof(cfg.api_username) / sizeof(*cfg.api_username));
+        } // HTTP Auth API Password
+        else if (server.argName(i) == "api_password")
+        {
+          value.toCharArray(cfg.api_password, sizeof(cfg.api_password) / sizeof(*cfg.api_password));
         }
 
         saveandreboot = true;
@@ -1178,6 +1217,16 @@ void handleSettings()
       html += "<tr>\n<td>\nAdmin password:</td>\n";
       html += "<td><input name='admin_password' type='password' maxlength='30' value='";
       html += cfg.admin_password;
+      html += "'></td>\n</tr>\n";
+
+      html += "<tr>\n<td>\nAPI username:</td>\n";
+      html += "<td><input name='api_username' type='text' maxlength='30' autocapitalize='none' value='";
+      html += cfg.api_username;
+      html += "'></td>\n</tr>\n";
+
+      html += "<tr>\n<td>\nAPI password:</td>\n";
+      html += "<td><input name='api_password' type='password' maxlength='30' value='";
+      html += cfg.api_password;
       html += "'></td>\n</tr>\n";
 
       html += "<tr>\n<td>LED brightness:</td>\n";
@@ -1360,7 +1409,7 @@ void MQTTcallback(char *topic, byte *payload, unsigned int length)
   Serial.println();
 
   BeamerControl(message);
-  
+
 
   delete message;
   */
@@ -1381,7 +1430,7 @@ boolean MQTTreconnect()
     client.setServer(cfg.mqtt_server, cfg.mqtt_port);
     client.setCallback(MQTTcallback);
 
-    //last will and testament topic
+    // last will and testament topic
     snprintf(buff, sizeof(buff), MQTT_PUBLISH_STATUS_TOPIC, mqtt_prefix, WiFi.hostname().c_str());
 
     if (client.connect(WiFi.hostname().c_str(), cfg.mqtt_user, cfg.mqtt_password, buff, 0, 1, MQTT_LWT_MESSAGE))
@@ -1429,6 +1478,9 @@ void loadDefaults()
   memcpy(cfg.admin_username, "", sizeof(cfg.admin_username) / sizeof(*cfg.admin_username));
   memcpy(cfg.admin_password, "", sizeof(cfg.admin_password) / sizeof(*cfg.admin_password));
 
+  memcpy(cfg.api_username, "", sizeof(cfg.api_username) / sizeof(*cfg.api_username));
+  memcpy(cfg.api_password, "", sizeof(cfg.api_password) / sizeof(*cfg.api_password));
+
   memcpy(cfg.mqtt_server, "", sizeof(cfg.mqtt_server) / sizeof(*cfg.mqtt_server));
   memcpy(cfg.mqtt_user, "", sizeof(cfg.mqtt_user) / sizeof(*cfg.mqtt_user));
   cfg.mqtt_port = 1883;
@@ -1456,7 +1508,7 @@ void loadConfig()
 void handleButton()
 {
   bool inp = digitalRead(HWPIN_PUSHBUTTON);
-  //Serial.printf_P(PSTR("Button state: %d\n"), inp);
+  // Serial.printf_P(PSTR("Button state: %d\n"), inp);
   if (inp == 0) // Button pressed
   {
     if (inp != previousButtonState)
@@ -1607,6 +1659,10 @@ void setup(void)
   server.on(F("/switch"), handleSwitch);
   server.on(F("/reboot"), handleReboot);
   server.on(F("/wifiscan"), handleWiFiScan);
+  server.on(F("/api/on"), []()
+            { handleAPI(APICMD::ON); });
+  server.on(F("/api/off"), []()
+            { handleAPI(APICMD::OFF); });
   server.onNotFound(handleNotFound);
   server.begin();
 
