@@ -18,9 +18,9 @@
 // ++++++++++++++++++++++++++++++++++++++++
 
 // Constants - Misc
-const char FIRMWARE_VERSION[] = "1.6";
+const char FIRMWARE_VERSION[] = "1.7";
 const char COMPILE_DATE[] = __DATE__ " " __TIME__;
-const int CURRENT_CONFIG_VERSION = 5;
+const int CURRENT_CONFIG_VERSION = 6;
 const int HTTP_PORT = 80;
 const int PWMRANGE = 1023;
 
@@ -241,6 +241,9 @@ void HTMLHeader(const char *section, unsigned int refresh, const char *url)
   html += "  font-size: 12px;\n";
   html += "  text-align: center;\n";
   html += "}\n";
+  html += "#footer a, #footer a:link, #footer a:visited {\n";
+  html += "  color: #FFF;\n";
+  html += "}\n";
 
   html += "table  {\n";
   html += "border-spacing: 0;\n";
@@ -296,7 +299,7 @@ void HTMLHeader(const char *section, unsigned int refresh, const char *url)
 void HTMLFooter()
 {
   html += "</div>";
-  html += "<div id='footer'>&copy; 2020 Fabian Otto - Firmware v";
+  html += "<div id='footer'>&copy; 2023 <a href=\"https://github.com/foorschtbar/BeamerControl\">foorschtbar</a> - Firmware v";
   html += FIRMWARE_VERSION;
   html += " - Compiled at ";
   html += COMPILE_DATE;
@@ -1170,9 +1173,9 @@ void handleSettings()
       html += "<table>\n";
 
       html += "<tr>\n<td>\nSettings source:</td>\n";
-      html += "<td><input type='text' disabled value='";
+      html += "<td>";
       html += (configIsDefault ? "Default settings" : "EEPROM");
-      html += "'></td>\n</tr>\n";
+      html += "</td>\n</tr>\n";
 
       html += "<tr>\n";
       html += "<td>Hostname:</td>\n";
@@ -1200,32 +1203,32 @@ void handleSettings()
       html += "'> <a href='/wifiscan' onclick='return confirm(\"Go to scan site? Changes will be lost!\")'>Scan</a></td>\n</tr>\n";
 
       html += "<tr>\n<td>\nPSK:</td>\n";
-      html += "<td><input name='psk' type='password' maxlength='30' value='";
+      html += "<td><input name='psk' type='password' maxlength='49' value='";
       html += cfg.wifi_psk;
       html += "'></td>\n</tr>\n";
 
       html += "<tr>\n<td>\nNote:</td>\n";
-      html += "<td><input name='note' type='text' maxlength='30' value='";
+      html += "<td><input name='note' type='text' maxlength='49' value='";
       html += cfg.note;
       html += "'></td>\n</tr>\n";
 
       html += "<tr>\n<td>\nAdmin username:</td>\n";
-      html += "<td><input name='admin_username' type='text' maxlength='30' autocapitalize='none' value='";
+      html += "<td><input name='admin_username' type='text' maxlength='29' autocapitalize='none' value='";
       html += cfg.admin_username;
       html += "'></td>\n</tr>\n";
 
       html += "<tr>\n<td>\nAdmin password:</td>\n";
-      html += "<td><input name='admin_password' type='password' maxlength='30' value='";
+      html += "<td><input name='admin_password' type='password' maxlength='29' value='";
       html += cfg.admin_password;
       html += "'></td>\n</tr>\n";
 
       html += "<tr>\n<td>\nAPI username:</td>\n";
-      html += "<td><input name='api_username' type='text' maxlength='30' autocapitalize='none' value='";
+      html += "<td><input name='api_username' type='text' maxlength='29' autocapitalize='none' value='";
       html += cfg.api_username;
       html += "'></td>\n</tr>\n";
 
       html += "<tr>\n<td>\nAPI password:</td>\n";
-      html += "<td><input name='api_password' type='password' maxlength='30' value='";
+      html += "<td><input name='api_password' type='password' maxlength='29' value='";
       html += cfg.api_password;
       html += "'></td>\n</tr>\n";
 
@@ -1271,9 +1274,18 @@ void handleSettings()
 
       html += "<tr>\n<td>Beamer baud rate:</td>\n";
       html += "<td><select name='beamerbaudrate'>";
+      html += "<option value='9600'";
+      html += (cfg.beamerbaudrate == 9600 ? " selected" : "");
+      html += ">9600</option>";
       html += "<option value='19200'";
       html += (cfg.beamerbaudrate == 19200 ? " selected" : "");
       html += ">19200</option>";
+      html += "<option value='38400'";
+      html += (cfg.beamerbaudrate == 38400 ? " selected" : "");
+      html += ">38400</option>";
+      html += "<option value='57600'";
+      html += (cfg.beamerbaudrate == 57600 ? " selected" : "");
+      html += ">57600</option>";
       html += "<option value='115200'";
       html += (cfg.beamerbaudrate == 115200 ? " selected" : "");
       html += ">115200</option>";
@@ -1281,7 +1293,7 @@ void handleSettings()
       html += "</td>\n</tr>\n";
 
       html += "<tr>\n<td>\nMQTT server:</td>\n";
-      html += "<td><input name='mqtt_server' type='text' maxlength='30' autocapitalize='none' value='";
+      html += "<td><input name='mqtt_server' type='text' maxlength='29' autocapitalize='none' value='";
       html += cfg.mqtt_server;
       html += "'></td>\n</tr>\n";
 
@@ -1291,17 +1303,17 @@ void handleSettings()
       html += "'> (Default 1883)</td>\n</tr>\n";
 
       html += "<tr>\n<td>\nMQTT username:</td>\n";
-      html += "<td><input name='mqtt_user' type='text' maxlength='50' autocapitalize='none' value='";
+      html += "<td><input name='mqtt_user' type='text' maxlength='49' autocapitalize='none' value='";
       html += cfg.mqtt_user;
       html += "'></td>\n</tr>\n";
 
       html += "<tr>\n<td>\nMQTT password:</td>\n";
-      html += "<td><input name='mqtt_password' type='password' maxlength='50' autocapitalize='none' value='";
+      html += "<td><input name='mqtt_password' type='password' maxlength='49' autocapitalize='none' value='";
       html += cfg.mqtt_password;
       html += "'></td>\n</tr>\n";
 
       html += "<tr>\n<td>\nMQTT prefix:</td>\n";
-      html += "<td><input name='mqtt_prefix' type='text' maxlength='30' autocapitalize='none' value='";
+      html += "<td><input name='mqtt_prefix' type='text' maxlength='49' autocapitalize='none' value='";
       html += cfg.mqtt_prefix;
       html += "'></td>\n</tr>\n";
 
@@ -1475,11 +1487,11 @@ void loadDefaults()
 
   memcpy(cfg.beamermodel, "", sizeof(cfg.beamermodel) / sizeof(*cfg.beamermodel));
 
-  memcpy(cfg.admin_username, "", sizeof(cfg.admin_username) / sizeof(*cfg.admin_username));
-  memcpy(cfg.admin_password, "", sizeof(cfg.admin_password) / sizeof(*cfg.admin_password));
+  memcpy(cfg.admin_username, "admin", sizeof(cfg.admin_username) / sizeof(*cfg.admin_username));
+  memcpy(cfg.admin_password, "admin", sizeof(cfg.admin_password) / sizeof(*cfg.admin_password));
 
-  memcpy(cfg.api_username, "", sizeof(cfg.api_username) / sizeof(*cfg.api_username));
-  memcpy(cfg.api_password, "", sizeof(cfg.api_password) / sizeof(*cfg.api_password));
+  memcpy(cfg.api_username, "api", sizeof(cfg.api_username) / sizeof(*cfg.api_username));
+  memcpy(cfg.api_password, "api", sizeof(cfg.api_password) / sizeof(*cfg.api_password));
 
   memcpy(cfg.mqtt_server, "", sizeof(cfg.mqtt_server) / sizeof(*cfg.mqtt_server));
   memcpy(cfg.mqtt_user, "", sizeof(cfg.mqtt_user) / sizeof(*cfg.mqtt_user));
@@ -1487,6 +1499,7 @@ void loadDefaults()
   memcpy(cfg.mqtt_password, "", sizeof(cfg.mqtt_password) / sizeof(*cfg.mqtt_password));
   memcpy(cfg.mqtt_prefix, "beamercontrol", sizeof(cfg.mqtt_prefix) / sizeof(*cfg.mqtt_prefix));
   cfg.mqtt_periodic_update_interval = 10;
+  cfg.led_brightness = 100;
 }
 
 void loadConfig()
@@ -1559,7 +1572,7 @@ void setup(void)
 
   Serial.begin(HWSERIAL_BAUD);
   delay(1000);
-  Serial.printf_P(PSTR("\n+++ Welcome to BeamerControl v%s+++\n"), FIRMWARE_VERSION);
+  Serial.printf_P(PSTR("\n+++ Welcome to BeamerControl v%s +++\n"), FIRMWARE_VERSION);
   WiFi.mode(WIFI_OFF);
 
   // AP or Infrastructire mode
@@ -1636,7 +1649,7 @@ void setup(void)
     }
     else
     {
-      swSer.begin(19200);
+      swSer.begin(SWSERIAL_DEFAULT_BAUDRATE);
     }
 
     // MDNS responder
