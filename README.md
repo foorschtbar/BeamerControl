@@ -39,7 +39,9 @@ In order to install BeamerControl on your ESP8266, you just need to clone this r
 ### Usage
 After you flashed image, a new wifi "BeamerControl" is opened.
 If you connect to this, open the webinterface on 192.168.4.1 and then click "WiFi Scan" to connect BeamerControl to your own WiFi. When you are asked for a password, type in admin/admin. Then set the Model and Baudrate to match the Baudrate set in your Projectors menu.
-The other settings are pretty self explanatory.
+All other settings are pretty self explanatory.  
+
+To reset all settings, press the Reset-Button for at least 30 seconds.
 
 ## REST API
 
