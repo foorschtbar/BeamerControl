@@ -1,32 +1,30 @@
 # BeamerControl
 
-A Arduino/ESP8266/NodeMCU based RS232-MQTT-Bridge to control a Projector (german: Beamer) via the RS232 serviceport.
+A Arduino/ESP8266/NodeMCU based RS232-MQTT-Bridge to control a projector (german: Beamer) via the RS232 serviceport.
 
-![](.github/beamercontrol.jpg)
-![](.github/settings.png)  
+<img src=".github/beamercontrol.jpg" width="400" />
+<img src=".github/settings.png" width="400" />
 
 
 ## Supported Projectors
 
 - Canon LV-Series (May need a proprietary DB9-Adapter-Cable)
-- Many BenQ-Models
-	- the following Models are known to work:
-		- BenQ LX770/LH770
-		- BenQ TH681
-		- BenQ TH530
+- Many BenQ-Models, the following Models are known to work:
+	- BenQ LX770/LH770
+	- BenQ TH681
+	- BenQ TH530
 
 ## Wiring
 
-![Case](.github/wiring.png)
-
+<img src=".github/wiring.png" width="400" />
 
 ## Case
 
 You can find a case for 3D-Printing on [Printables](https://www.printables.com/model/465783-beamercontrol-rs232-mqtt-bridge-to-control-a-beame).  
 This case is intended to be used with an original NodeMCU and a generic TTL-to-RS232 adapter.
 
-![Case](.github/rendering1.png)
-![Case](.github/rendering2.png)
+<img src=".github/rendering1.png" width="400" />
+<img src=".github/rendering2.png" width="400" />
 
 ## Installation
 This software was created using Visual Studio Code in combination with PlatformIO.  
@@ -38,17 +36,16 @@ In order to install BeamerControl on your ESP8266, you just need to clone this r
 
 ### Usage
 After you flashed image, a new wifi "BeamerControl" is opened.
-If you connect to this, open the webinterface on 192.168.4.1 and then click "WiFi Scan" to connect BeamerControl to your own WiFi. When you are asked for a password, type in admin/admin. Then set the Model and Baudrate to match the Baudrate set in your Projectors menu.
-All other settings are pretty self explanatory.  
+If you connect to this, open the webinterface on `192.168.4.1` and then click `WiFi Scan` to connect BeamerControl to your own WiFi. When you are asked for a password, type in `admin/admin`. Then set the Model and Baudrate to match the Baudrate set in your Projectors menu. All other settings are pretty self explanatory.  
 
 To reset all settings, press the Reset-Button for at least 30 seconds.
 
 ## REST API
 
-In order to use the REST-API you have to authenticate with the user and password set in the settings-menu (default: api/api)  
+In order to use the REST-API you have to authenticate with the user and password set in the settings-menu (default: `api/api`)  
 The following calls are available:
-- http://api:api@[hostname]/api/on  
-- http://api:api@[hostname]/api/off  
+- `http://api:api@[hostname]/api/on`  
+- `http://api:api@[hostname]/api/off`  
 
 They respond the status-code 200 upon success with either *on* or *off* accordingly.
 
